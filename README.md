@@ -33,6 +33,16 @@ pip install -r requirements.txt
 2. Configure your AWS credentials via `aws configure`.
 3. The project source is structured under `src/`.
 
+## Testing 
+
+CloudSpider uses `pytest` and `moto` to perform fully offline unit testing, ensuring that the Boto3 extraction logic accurately parses responses without hitting real AWS infrastructure.
+
+To run the test suite:
+```bash
+# From the CloudSpider root directory
+python -m pytest tests/ -v
+```
+
 ## Project Structure
 
 ```text
