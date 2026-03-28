@@ -15,7 +15,8 @@ class Extractor:
         self.region_name = region_name
         self.session = None
         self.iam_client = None
-    
+        self._policy_cache = {}
+
     def authenticate(self) -> bool:
         """Authenticate with AWS using Boto3."""
         try:
@@ -31,6 +32,21 @@ class Extractor:
             logger.error(f"Failed to authenticate with AWS: {e}")
             return False
 
+    def _get_managed_policy_document(self, policy_arn: str) -> Dict[str, Any]:
+        """Fetch and cache managed policy documents."""
+        if policy_arn in self._policy_cache:
+            return self._policy_cache[policy_arn]
+        try:
+            policy_info = self.iam_client.get_policy(PolicyArn=policy_arn)['Policy']
+            version_id = policy_info['DefaultVersionId']
+            version_info = self.iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=version_id)
+            doc = version_info['PolicyVersion']['Document']
+            self._policy_cache[policy_arn] = doc
+            return doc
+        except Exception as e:
+            logger.error(f"Error fetching managed policy {policy_arn}: {e}")
+            return {}
+
     def extract_identities(self) -> List[Identity]:
         """Extract IAM Users and Roles."""
         identities = []
@@ -40,12 +56,45 @@ class Extractor:
             paginator = self.iam_client.get_paginator('list_users')
             for page in paginator.paginate():
                 for user in page['Users']:
+                    user_name = user['UserName']
+                    policies = []
+                    
+                    # Get Inline Policies
+                    try:
+                        inline_pags = self.iam_client.get_paginator('list_user_policies')
+                        for p_page in inline_pags.paginate(UserName=user_name):
+                            for pol_name in p_page.get('PolicyNames', []):
+                                doc_resp = self.iam_client.get_user_policy(UserName=user_name, PolicyName=pol_name)
+                                policies.append({
+                                    "PolicyName": pol_name,
+                                    "PolicyType": "Inline",
+                                    "PolicyDocument": doc_resp['PolicyDocument']
+                                })
+                    except Exception as e:
+                        logger.error(f"Error fetching inline policies for user {user_name}: {e}")
+
+                    # Get Managed Policies
+                    try:
+                        attached_pags = self.iam_client.get_paginator('list_attached_user_policies')
+                        for a_page in attached_pags.paginate(UserName=user_name):
+                            for attached in a_page.get('AttachedPolicies', []):
+                                doc = self._get_managed_policy_document(attached['PolicyArn'])
+                                policies.append({
+                                    "PolicyName": attached['PolicyName'],
+                                    "PolicyArn": attached['PolicyArn'],
+                                    "PolicyType": "Managed",
+                                    "PolicyDocument": doc
+                                })
+                    except Exception as e:
+                        logger.error(f"Error fetching attached policies for user {user_name}: {e}")
+
                     identities.append(
                         Identity(
                             id=user['Arn'],
-                            name=user['UserName'],
+                            name=user_name,
                             type=NodeType.USER,
-                            metadata=user
+                            metadata=user,
+                            policies=policies
                         )
                     )
         except Exception as e:
@@ -56,12 +105,45 @@ class Extractor:
             paginator = self.iam_client.get_paginator('list_roles')
             for page in paginator.paginate():
                 for role in page['Roles']:
+                    role_name = role['RoleName']
+                    policies = []
+                    
+                    # Get Inline Policies
+                    try:
+                        inline_pags = self.iam_client.get_paginator('list_role_policies')
+                        for p_page in inline_pags.paginate(RoleName=role_name):
+                            for pol_name in p_page.get('PolicyNames', []):
+                                doc_resp = self.iam_client.get_role_policy(RoleName=role_name, PolicyName=pol_name)
+                                policies.append({
+                                    "PolicyName": pol_name,
+                                    "PolicyType": "Inline",
+                                    "PolicyDocument": doc_resp['PolicyDocument']
+                                })
+                    except Exception as e:
+                        logger.error(f"Error fetching inline policies for role {role_name}: {e}")
+
+                    # Get Managed Policies
+                    try:
+                        attached_pags = self.iam_client.get_paginator('list_attached_role_policies')
+                        for a_page in attached_pags.paginate(RoleName=role_name):
+                            for attached in a_page.get('AttachedPolicies', []):
+                                doc = self._get_managed_policy_document(attached['PolicyArn'])
+                                policies.append({
+                                    "PolicyName": attached['PolicyName'],
+                                    "PolicyArn": attached['PolicyArn'],
+                                    "PolicyType": "Managed",
+                                    "PolicyDocument": doc
+                                })
+                    except Exception as e:
+                        logger.error(f"Error fetching attached policies for role {role_name}: {e}")
+
                     identities.append(
                         Identity(
                             id=role['Arn'],
-                            name=role['RoleName'],
+                            name=role_name,
                             type=NodeType.ROLE,
-                            metadata=role
+                            metadata=role,
+                            policies=policies
                         )
                     )
         except Exception as e:
