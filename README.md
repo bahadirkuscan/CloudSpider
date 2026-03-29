@@ -13,8 +13,11 @@ The Discovery Engine is responsible for extracting metadata from the environment
   - Extracts core compute and storage resources (S3, EC2, Lambda, RDS) by mapping them to the common `Resource` and `Identity` models.
 
 ### 2. Policy Evaluator (Logic Core)
-*(Pending Implementation)*
-Parses JSON policy documents to resolve effective permissions by simulating AWS's internal evaluation algorithm, accounting for `Explicit Deny`, `Allow`, and conditional logic blocks.
+Parses JSON policy documents to resolve effective permissions by simulating AWS's internal evaluation algorithm.
+- Supports processing inline and managed policies.
+- Evaluates `Explicit Deny` overrides and default `Deny` rules.
+- Contains string wildcard matching (`*` and `?`) for robust Action and ARN evaluation.
+- Implements condition block evaluation (e.g., `StringEquals`, `StringLike`, `IfExists` operator support) based on a given context state.
 
 ### 3. Graph Constructor
 *(Pending Implementation)*
@@ -53,6 +56,9 @@ CloudSpider/
     ├── discovery/          # Discovery Engine: Connects to AWS
     │   └── extractor.py    # Boto3 logic for extracting Identities and Resources
     ├── evaluator/          # Logic Core: Resolves AWS IAM effective permissions
+    │   ├── engine.py       # Core evaluation loop supporting Explicit Deny logic
+    │   ├── utils.py        # Wildcard matching operators
+    │   └── conditions.py   # Context validations like StringEquals and IfExists
     ├── graph/              # Graph Constructor: Maps environment into Neo4j
     ├── models/             # Shared Schemas: Defines the data structures
     │   └── common.py       # Pydantic models (Identity, Resource, NodeType)
