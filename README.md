@@ -16,6 +16,7 @@ The Discovery Engine is responsible for extracting metadata from the environment
 Parses JSON policy documents to resolve effective permissions by simulating AWS's internal evaluation algorithm.
 - Supports processing inline, managed, **group-inherited**, and **resource-based** policies.
 - Evaluates `Explicit Deny` overrides and default `Deny` rules with full support for `NotAction` and `NotResource`.
+- Enforces strict intersection rules mapping **Permissions Boundaries**, Organization **SCPs**, and temporary **Session Policies** directly mimicking AWS evaluation behavior.
 - Contains wildcard matching (`*` and `?`) and **policy variable expansion** (e.g., `${aws:username}`) for robust Action and ARN evaluation.
 - Comprehensive condition block evaluation (`String`, `Numeric`, `Date`, `Bool`, `IpAddress`, `Null`, `Arn`) with `ForAnyValue` and `ForAllValues` set operators, defaulting to a **fail-closed** strategy for strict security.
 

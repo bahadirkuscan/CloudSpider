@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union, Optional, Tuple
 from src.evaluator.utils import match_wildcard, expand_policy_variables
 from src.evaluator.conditions import evaluate_condition
 from src.models.common import Identity, Resource
@@ -12,28 +12,14 @@ class PolicyEvaluator:
     def __init__(self, identity: Identity):
         self.identity = identity
     
-    def is_allowed(self, action: str, resource: Union[str, "Resource"], context: Optional[Dict[str, Any]] = None) -> bool:
+    def _eval_policy_set(self, policies: List[Dict[str, Any]], action: str, resource_arn: str, context: Dict[str, Any], is_resource_policy: bool) -> Tuple[bool, bool]:
         """
-        Core evaluation engine logic.
-        Validates all policies to find if an action is explicitly allowed or explicitly denied.
-        Explicit Deny ALWAYS takes precedence over any Allow.
-        If no Allow statement applies, returns False.
+        Evaluates a set of policies and returns (has_allow, has_deny).
         """
-        if context is None:
-            context = {}
-            
-        allowed = False
-        resource_arn = resource.id if isinstance(resource, Resource) else resource
-        
-        policies_to_evaluate = [(p, False) for p in self.identity.policies]
-        for gp in getattr(self.identity, "group_policies", []):
-            policies_to_evaluate.append((gp, False))
-            
-        if isinstance(resource, Resource) and hasattr(resource, "policies"):
-            for rp in resource.policies:
-                policies_to_evaluate.append((rp, True))
-        
-        for policy, is_resource_policy in policies_to_evaluate:
+        has_allow = False
+        for policy in policies:
+            if not policy:
+                continue
             doc = policy.get("PolicyDocument", {})
             statements = doc.get("Statement", [])
             
@@ -108,8 +94,55 @@ class PolicyEvaluator:
                 if condition_matches:
                     if effect == "Deny":
                         # Explicit Deny strictly overrides any other rules or subsequent statements
-                        return False
+                        return False, True
                     elif effect == "Allow":
-                        allowed = True
+                        has_allow = True
                         
-        return allowed
+        return has_allow, False
+    
+    def is_allowed(self, action: str, resource: Union[str, "Resource"], context: Optional[Dict[str, Any]] = None, session_policies: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """
+        Core evaluation engine logic.
+        Validates the intersection of Base Policies, Permissions Boundaries, SCPs, and Session Policies.
+        """
+        if context is None:
+            context = {}
+            
+        resource_arn = resource.id if isinstance(resource, Resource) else resource
+        
+        # 1. Base Zone Evaluation
+        base_policies = self.identity.policies + getattr(self.identity, "group_policies", [])
+        base_allow, base_deny = self._eval_policy_set(base_policies, action, resource_arn, context, False)
+        if base_deny:
+            return False
+            
+        if isinstance(resource, Resource) and hasattr(resource, "policies") and resource.policies:
+            res_allow, res_deny = self._eval_policy_set(resource.policies, action, resource_arn, context, True)
+            if res_deny:
+                return False
+            base_allow = base_allow or res_allow
+            
+        if not base_allow:
+            return False
+            
+        # 2. Permissions Boundary Zone
+        pb = getattr(self.identity, "permissions_boundary", None)
+        if pb:
+            pb_allow, pb_deny = self._eval_policy_set([pb], action, resource_arn, context, False)
+            if pb_deny or not pb_allow:
+                return False
+                
+        # 3. SCP Zone
+        scps = getattr(self.identity, "scps", [])
+        if scps:
+            scp_allow, scp_deny = self._eval_policy_set(scps, action, resource_arn, context, False)
+            if scp_deny or not scp_allow:
+                return False
+                
+        # 4. Session Policies Zone
+        if session_policies:
+            sp_allow, sp_deny = self._eval_policy_set(session_policies, action, resource_arn, context, False)
+            if sp_deny or not sp_allow:
+                return False
+                
+        return True

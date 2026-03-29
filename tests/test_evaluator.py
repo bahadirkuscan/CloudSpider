@@ -265,3 +265,107 @@ def test_condition_forallvalues():
     # False if the user includes a tag key not in the allowed list
     assert evaluator.is_allowed("iam:PassRole", "*", context={"aws:TagKeys": ["project", "environment"]}) is False
 
+def test_permissions_boundary():
+    # Base allow
+    policies = [{
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "s3:*",
+                    "Resource": "*"
+                }
+            ]
+        }
+    }]
+    # PB only allows reading
+    pb = {
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:Get*", "s3:List*"],
+                    "Resource": "*"
+                }
+            ]
+        }
+    }
+    identity = create_identity(policies)
+    identity.permissions_boundary = pb
+    evaluator = PolicyEvaluator(identity)
+    
+    assert evaluator.is_allowed("s3:GetObject", "arn:aws:s3:::mybucket") is True
+    assert evaluator.is_allowed("s3:PutObject", "arn:aws:s3:::mybucket") is False
+
+def test_scp_override():
+    policies = [{
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "*",
+                    "Resource": "*"
+                }
+            ]
+        }
+    }]
+    
+    # SCP explicitly denies S3
+    scp = {
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Deny",
+                    "Action": "s3:*",
+                    "Resource": "*"
+                },
+                {
+                    "Effect": "Allow", # Organization typically allows all if not explicitly denied
+                    "Action": "*",
+                    "Resource": "*"
+                }
+            ]
+        }
+    }
+    identity = create_identity(policies)
+    identity.scps = [scp]
+    evaluator = PolicyEvaluator(identity)
+    
+    assert evaluator.is_allowed("ec2:StartInstances", "arn:aws:ec2::123:instance/i-12345") is True
+    assert evaluator.is_allowed("s3:GetObject", "arn:aws:s3:::mybucket") is False
+
+def test_session_policies():
+    policies = [{
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "dynamodb:*",
+                    "Resource": "*"
+                }
+            ]
+        }
+    }]
+    identity = create_identity(policies)
+    evaluator = PolicyEvaluator(identity)
+    
+    session_policies = [{
+        "PolicyDocument": {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "dynamodb:Query",
+                    "Resource": "*"
+                } # Limits session to ONLY Query
+            ]
+        }
+    }]
+    
+    # Valid without session policy
+    assert evaluator.is_allowed("dynamodb:PutItem", "arn:aws:dynamodb:us-east-1:123:table/test") is True
+    # Invalid with intersection session limits
+    assert evaluator.is_allowed("dynamodb:PutItem", "arn:aws:dynamodb:us-east-1:123:table/test", session_policies=session_policies) is False
+    # Valid and matching session intersection
+    assert evaluator.is_allowed("dynamodb:Query", "arn:aws:dynamodb:us-east-1:123:table/test", session_policies=session_policies) is True
+
+
