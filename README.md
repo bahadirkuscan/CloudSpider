@@ -14,10 +14,10 @@ The Discovery Engine is responsible for extracting metadata from the environment
 
 ### 2. Policy Evaluator (Logic Core)
 Parses JSON policy documents to resolve effective permissions by simulating AWS's internal evaluation algorithm.
-- Supports processing inline and managed policies.
-- Evaluates `Explicit Deny` overrides and default `Deny` rules.
-- Contains string wildcard matching (`*` and `?`) for robust Action and ARN evaluation.
-- Implements condition block evaluation (e.g., `StringEquals`, `StringLike`, `IfExists` operator support) based on a given context state.
+- Supports processing inline, managed, **group-inherited**, and **resource-based** policies.
+- Evaluates `Explicit Deny` overrides and default `Deny` rules with full support for `NotAction` and `NotResource`.
+- Contains wildcard matching (`*` and `?`) and **policy variable expansion** (e.g., `${aws:username}`) for robust Action and ARN evaluation.
+- Comprehensive condition block evaluation (`String`, `Numeric`, `Date`, `Bool`, `IpAddress`, `Null`, `Arn`) with `ForAnyValue` and `ForAllValues` set operators, defaulting to a **fail-closed** strategy for strict security.
 
 ### 3. Graph Constructor
 *(Pending Implementation)*
