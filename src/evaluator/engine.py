@@ -108,7 +108,7 @@ class PolicyEvaluator:
         if context is None:
             context = {}
             
-        resource_arn = resource.id if isinstance(resource, Resource) else resource
+        resource_arn = resource.id if hasattr(resource, "id") else resource
         
         # 1. Base Zone Evaluation
         base_policies = self.identity.policies + getattr(self.identity, "group_policies", [])
@@ -116,7 +116,7 @@ class PolicyEvaluator:
         if base_deny:
             return False
             
-        if isinstance(resource, Resource) and hasattr(resource, "policies") and resource.policies:
+        if hasattr(resource, "policies") and resource.policies:
             res_allow, res_deny = self._eval_policy_set(resource.policies, action, resource_arn, context, True)
             if res_deny:
                 return False

@@ -21,21 +21,19 @@ Parses JSON policy documents to resolve effective permissions by simulating AWS'
 - Comprehensive condition block evaluation (`String`, `Numeric`, `Date`, `Bool`, `IpAddress`, `Null`, `Arn`) with `ForAnyValue` and `ForAllValues` set operators, defaulting to a **fail-closed** strategy for strict security.
 
 ### 3. Graph Constructor
-*(Pending Implementation)*
-Integrates with **Neo4j** to model the extracted identities, resources, and their permissions as a directed graph. Nodes represent assets, and edges represent potential actions or trust relationships (e.g., `AssumeRole`).
+Integrates with **Neo4j** to model the extracted identities, resources, and their permissions as a directed graph. 
+- Automates the spinning up of a local Neo4j Docker container under the hood for a frictionless backend.
+- Translates Pydantic extraction models into Neo4j nodes.
+- Utilizes the Policy Evaluator to determine valid privilege escalation edges (`ASSUME_ROLE`, `PASS_ROLE`, `AdministerResource`, `CanUpdateFunction`, `CanRunInstance`) across core AWS services (IAM, EC2, Lambda).
 
 ### 4. Pathfinding Analyst
-*(Pending Implementation)*
-Applies graph traversal algorithms (like Breadth-First Search or Dijkstra's) via Cypher queries onto the Neo4j database to uncover transitive privilege escalation paths from low-privileged entry points to critical "Crown Jewel" assets.
+Applies graph traversal algorithms via Cypher queries onto the Neo4j database to uncover transitive privilege escalation paths from low-privileged entry points to critical "Crown Jewel" assets or full administrators.
 
-## Getting Started
+## Prerequisites
+- **Python 3.8+**
+- **Docker**: Must be installed and running on your host machine (CloudSpider automatically orchestrates a Neo4j container).
+- **AWS CLI**: Ensure your credentials are authenticated (`aws configure`).
 
-1. Set up your Python environment and install dependencies:
-```bash
-pip install -r requirements.txt
-```
-2. Configure your AWS credentials via `aws configure`.
-3. The project source is structured under `src/`.
 
 ## Testing 
 
