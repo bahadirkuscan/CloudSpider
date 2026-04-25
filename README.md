@@ -2,6 +2,16 @@
 
 CloudSpider is a graph-based framework for automating transitive privilege escalation discovery in multi-account AWS architectures.
 
+## Quick Start
+
+The entire stack (Flask GUI + Neo4j database) is containerized via Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+Then open **http://localhost:5000** in your browser.
+
 ## Architecture & Implementation Details
 
 ### 1. Discovery Engine
@@ -22,18 +32,25 @@ Parses JSON policy documents to resolve effective permissions by simulating AWS'
 
 ### 3. Graph Constructor
 Integrates with **Neo4j** to model the extracted identities, resources, and their permissions as a directed graph. 
-- Automates the spinning up of a local Neo4j Docker container under the hood for a frictionless backend.
+- Managed automatically via Docker Compose — no manual container orchestration required.
 - Translates Pydantic extraction models into Neo4j nodes.
 - Utilizes the Policy Evaluator to determine valid privilege escalation edges (`ASSUME_ROLE`, `PASS_ROLE`, `AdministerResource`, `CanUpdateFunction`, `CanRunInstance`) across core AWS services (IAM, EC2, Lambda).
 
 ### 4. Pathfinding Analyst
 Applies graph traversal algorithms via Cypher queries onto the Neo4j database to uncover transitive privilege escalation paths from low-privileged entry points to critical "Crown Jewel" assets or full administrators.
 
-## Prerequisites
-- **Python 3.8+**
-- **Docker**: Must be installed and running on your host machine (CloudSpider automatically orchestrates a Neo4j container).
-- **AWS CLI**: Ensure your credentials are authenticated (`aws configure`).
+### 5. Interactive GUI
+A web-based single-page application served by Flask that provides a graphical interface to the entire pipeline.
+- **Credential Manager**: Configure and switch between multiple AWS IAM credential profiles. Credentials are stored in-memory only and never persisted to disk.
+- **Pipeline Controls**: Run Discovery, Build Graph (scratch or extend mode), or execute the full pipeline with a single click. Real-time log streaming via WebSocket shows live progress.
+- **Graph Visualization**: Interactive D3.js force-directed graph with color-coded nodes (Users, Roles, Compute, Storage) and styled edges by relationship type. Supports drag, zoom, pan, and click interactions.
+- **Pathfinder Query**: Select a start node and optionally a target to discover privilege escalation paths. Found paths are visually highlighted on the graph.
+- **Action Execution**: Click any graph edge to open an action modal and execute the corresponding real AWS API call (e.g., `sts:AssumeRole`, `iam:CreateAccessKey`) with a confirmation dialog.
+- **Graph Snapshots**: Save the current graph state to a JSON file and reload it later. Snapshots are persisted in a Docker volume.
 
+## Prerequisites
+- **Docker**: Must be installed and running on your host machine. Docker Compose orchestrates both the application and Neo4j containers.
+- **AWS Credentials**: Access Key ID and Secret Access Key for the target AWS account(s). Credentials are configured through the GUI at runtime.
 
 ## Testing 
 
@@ -50,7 +67,9 @@ python -m pytest tests/ -v
 ```text
 CloudSpider/
 ├── README.md               # Project documentation and implementation details
-├── requirements.txt        # Python dependencies (boto3, pydantic, neo4j, etc.)
+├── Dockerfile              # Flask application container image
+├── docker-compose.yml      # Two-service stack: app (Flask) + neo4j
+├── requirements.txt        # Python dependencies (boto3, pydantic, neo4j, flask, etc.)
 └── src/                    # Main source code directory
     ├── discovery/          # Discovery Engine: Connects to AWS
     │   └── extractor.py    # Boto3 logic for extracting Identities and Resources
@@ -59,7 +78,18 @@ CloudSpider/
     │   ├── utils.py        # Wildcard matching operators
     │   └── conditions.py   # Context validations like StringEquals and IfExists
     ├── graph/              # Graph Constructor: Maps environment into Neo4j
+    │   └── builder.py      # Neo4j node/edge creation and graph management
+    ├── gui/                # Interactive GUI (Flask + D3.js)
+    │   ├── __main__.py     # Entry point: python -m src.gui
+    │   ├── app.py          # Flask REST API routes and SocketIO log streaming
+    │   ├── orchestrator.py # Pipeline controller, credential store, snapshot manager
+    │   └── static/         # Frontend assets
+    │       ├── index.html  # Single-page application shell
+    │       ├── index.css   # Dark theme design system
+    │       └── app.js      # D3.js graph renderer and UI logic
     ├── models/             # Shared Schemas: Defines the data structures
     │   └── common.py       # Pydantic models (Identity, Resource, NodeType)
     └── pathfinder/         # Analyst: Graph traversal for privilege escalation paths
+        ├── analyst.py      # Cypher-based path discovery
+        └── queries.py      # Parameterized Cypher query templates
 ```

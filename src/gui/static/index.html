@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="CloudSpider — Interactive AWS privilege escalation discovery and graph exploration tool.">
+    <title>CloudSpider</title>
+    <link rel="stylesheet" href="/static/index.css">
+</head>
+
+<body>
+    <div id="app-container">
+        <!-- ── Header ──────────────────────────────────────────── -->
+        <header id="header">
+            <div class="logo">
+                <span class="logo-icon">🕷️</span>
+                <span>CloudSpider</span>
+            </div>
+            <div class="header-right">
+                <div id="pipeline-stage" class="pipeline-indicator" data-stage="idle">Idle</div>
+                <div id="profile-badge" class="profile-badge">
+                    <span class="dot"></span>
+                    <span id="profile-badge-text">No Profile</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ── Sidebar ─────────────────────────────────────────── -->
+        <aside id="sidebar">
+            <!-- Credentials -->
+            <div class="sidebar-section open" id="section-credentials">
+                <div class="sidebar-section-header" onclick="toggleSection('section-credentials')">
+                    <span class="icon">🔑</span>
+                    <span>Credentials</span>
+                    <span class="chevron">▶</span>
+                </div>
+                <div class="sidebar-section-body">
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label for="cred-name">Profile Name</label>
+                            <input type="text" id="cred-name" class="form-input" placeholder="e.g. dev-account">
+                        </div>
+                        <div class="form-group">
+                            <label for="cred-key">Access Key ID</label>
+                            <input type="text" id="cred-key" class="form-input" placeholder="AKIA...">
+                        </div>
+                        <div class="form-group">
+                            <label for="cred-secret">Secret Access Key</label>
+                            <input type="password" id="cred-secret" class="form-input" placeholder="••••••••">
+                        </div>
+                        <div class="form-group">
+                            <label for="cred-token">Session Token (optional)</label>
+                            <input type="text" id="cred-token" class="form-input" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="cred-region">Region</label>
+                            <input type="text" id="cred-region" class="form-input" value="us-east-1">
+                        </div>
+                        <button id="btn-add-cred" class="btn btn-primary btn-block" onclick="addCredential()">
+                            <span class="spinner"></span>
+                            Add Profile
+                        </button>
+                        <div id="cred-list" class="cred-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pipeline -->
+            <div class="sidebar-section" id="section-pipeline">
+                <div class="sidebar-section-header" onclick="toggleSection('section-pipeline')">
+                    <span class="icon">⚙️</span>
+                    <span>Pipeline</span>
+                    <span class="chevron">▶</span>
+                </div>
+                <div class="sidebar-section-body">
+                    <div class="section-content">
+                        <div class="mode-toggle">
+                            <button class="mode-toggle-btn active" data-mode="scratch"
+                                onclick="setMode('scratch')">Scratch</button>
+                            <button class="mode-toggle-btn" data-mode="extend"
+                                onclick="setMode('extend')">Extend</button>
+                        </div>
+                        <div class="pipeline-buttons">
+                            <button id="btn-discover" class="btn btn-primary btn-block" onclick="runDiscover()">
+                                <span class="spinner"></span>
+                                🔍 Discover
+                            </button>
+                            <button id="btn-build" class="btn btn-primary btn-block" onclick="runBuild()">
+                                <span class="spinner"></span>
+                                🏗️ Build Graph
+                            </button>
+                            <button id="btn-run-all" class="btn btn-success btn-block" onclick="runAll()">
+                                <span class="spinner"></span>
+                                🚀 Run All
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pathfinder -->
+            <div class="sidebar-section" id="section-pathfinder">
+                <div class="sidebar-section-header" onclick="toggleSection('section-pathfinder')">
+                    <span class="icon">🔍</span>
+                    <span>Pathfinder</span>
+                    <span class="chevron">▶</span>
+                </div>
+                <div class="sidebar-section-body">
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label for="path-start">Start Node (ARN)</label>
+                            <select id="path-start" class="form-input">
+                                <option value="">— Select a node —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="path-target">Target Node (optional)</label>
+                            <select id="path-target" class="form-input">
+                                <option value="">— Any target —</option>
+                            </select>
+                        </div>
+                        <div class="btn-group">
+                            <button id="btn-find-paths" class="btn btn-primary flex-1" onclick="findPaths()">
+                                <span class="spinner"></span>
+                                Find Paths
+                            </button>
+                            <button class="btn btn-ghost" onclick="clearHighlights()">Clear</button>
+                        </div>
+                        <div id="path-results" class="path-results"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Snapshots -->
+            <div class="sidebar-section" id="section-snapshots">
+                <div class="sidebar-section-header" onclick="toggleSection('section-snapshots')">
+                    <span class="icon">💾</span>
+                    <span>Snapshots</span>
+                    <span class="chevron">▶</span>
+                </div>
+                <div class="sidebar-section-body">
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label for="snap-name">Snapshot Name</label>
+                            <input type="text" id="snap-name" class="form-input" placeholder="e.g. baseline-scan">
+                        </div>
+                        <button id="btn-save-snap" class="btn btn-primary btn-block" onclick="saveSnapshot()">
+                            <span class="spinner"></span>
+                            💾 Save Current Graph
+                        </button>
+                        <div id="snapshot-list" class="mt-12"></div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ── Main Canvas ─────────────────────────────────────── -->
+        <main id="canvas">
+            <svg id="graph-svg"></svg>
+            <div id="graph-empty">
+                <div class="icon">🕸️</div>
+                <p>No graph data yet. Configure credentials and run the pipeline to visualize your AWS environment.</p>
+            </div>
+            <div id="graph-legend" class="hidden">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--accent-blue)"></div> User
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--accent-purple)"></div> Role
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--accent-orange)"></div> Compute
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--accent-green)"></div> Storage
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--accent-yellow)"></div> Group
+                </div>
+            </div>
+        </main>
+
+        <!-- ── Log Console ─────────────────────────────────────── -->
+        <div id="log-panel">
+            <div class="log-header" onclick="toggleLog()">
+                <span>📋 Log Console</span>
+                <span id="log-count" class="log-count-badge">0</span>
+            </div>
+            <div class="log-body" id="log-body"></div>
+        </div>
+    </div>
+
+    <!-- ── Node Tooltip ────────────────────────────────────────── -->
+    <div id="node-tooltip">
+        <div class="tt-name" id="tt-name"></div>
+        <div class="tt-type" id="tt-type"></div>
+        <div class="tt-arn" id="tt-arn"></div>
+    </div>
+
+    <!-- ── Action Modal ────────────────────────────────────────── -->
+    <div id="action-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+            <div class="modal-title">
+                <span>⚡</span>
+                <span id="modal-title-text">Execute Action</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-detail">
+                    <div class="label">Source</div>
+                    <div id="modal-source"></div>
+                </div>
+                <div class="modal-detail">
+                    <div class="label">Relationship</div>
+                    <div id="modal-edge-type" style="color:var(--accent-orange);font-weight:600"></div>
+                </div>
+                <div class="modal-detail">
+                    <div class="label">Target</div>
+                    <div id="modal-target"></div>
+                </div>
+                <div class="modal-warning">
+                    <span class="icon">⚠️</span>
+                    <span>This will execute a real AWS API call against live infrastructure. This action may modify IAM
+                        policies, create access keys, or assume roles. Proceed with caution.</span>
+                </div>
+            </div>
+            <div id="modal-result-area"></div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                <button id="btn-execute-action" class="btn btn-danger" onclick="executeAction()">
+                    <span class="spinner"></span>
+                    Execute Action
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Toast Container ─────────────────────────────────────── -->
+    <div id="toast-container"></div>
+
+    <!-- ── Scripts ─────────────────────────────────────────────── -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

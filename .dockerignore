@@ -1,0 +1,11 @@
+.git
+__pycache__
+*.pyc
+.pytest_cache
+tests/
+lab/
+PMapper/
+pacu/
+figures/
+*.pdf
+CloudSpider.wiki/
