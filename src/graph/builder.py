@@ -15,6 +15,29 @@ class GraphBuilder:
         self.uri = uri
         self.driver = None
         self._container_name = "cloudspider-neo4j"
+
+    def connect(self):
+        """Connect to an already-running Neo4j instance (e.g. managed by Docker Compose)."""
+        self.driver = GraphDatabase.driver(self.uri)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                with self.driver.session() as session:
+                    session.run("RETURN 1")
+                logger.info("Successfully connected to Neo4j.")
+                return
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error("Failed to connect to Neo4j after multiple retries.")
+                    raise
+                logger.warning(f"Neo4j not ready yet, retrying in 3 seconds... ({e})")
+                time.sleep(3)
+
+    def clear_graph(self):
+        """Remove all nodes and relationships from the database."""
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        logger.info("Graph cleared.")
         
     def start_local_db(self):
         """Orchestrate local Neo4j Docker container start"""
