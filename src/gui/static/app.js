@@ -8,18 +8,28 @@ let currentMode = "scratch";
 let currentModal = null;
 let logCount = 0;
 
+// Tracks which nodes are compromised (ARN set)
+let compromisedNodes = new Set();
+// Tracks edge action status: key = "source|target|type", value = "taken"|"possible"|"blocked"
+let edgeStatus = {};
+
+function edgeKey(d) {
+    const s = typeof d.source === "object" ? d.source.id : d.source;
+    const t = typeof d.target === "object" ? d.target.id : d.target;
+    return `${s}|${t}|${d.type}`;
+}
+
 // ── Node color map ───────────────────────────────────────────────────
 const NODE_COLORS = {
     USER: "#58a6ff", ROLE: "#bc8cff", COMPUTE: "#f0883e",
     STORAGE: "#3fb950", GROUP: "#e3b341", UNKNOWN: "#8b949e"
 };
-const EDGE_STYLES = {
-    ASSUME_ROLE: { color: "#58a6ff", dash: "" },
-    PASS_ROLE: { color: "#bc8cff", dash: "6,3" },
-    AdministerResource: { color: "#f85149", dash: "4,4" },
-    CreateAccessKey: { color: "#f0883e", dash: "2,4" },
-    CanUpdateFunction: { color: "#e3b341", dash: "8,4" },
-    CanRunInstance: { color: "#56d4dd", dash: "10,4" }
+
+// Edge status styles: taken = green solid, possible = amber dashed, blocked = gray dotted
+const EDGE_STATUS_STYLES = {
+    taken:    { color: "#3fb950", dash: "",    width: 2.5 },
+    possible: { color: "#f0883e", dash: "8,4", width: 2   },
+    blocked:  { color: "#484f58", dash: "3,5", width: 1.5 }
 };
 
 // ── Init ─────────────────────────────────────────────────────────────
@@ -155,6 +165,9 @@ async function activateProfile(name) {
     try {
         const res = await api(`/api/credentials/${name}/activate`, "POST");
         showToast(`Profile "${name}" activated. Identity: ${res.identity.arn}`, "success");
+        // Mark the user's ARN as compromised
+        compromisedNodes.add(res.identity.arn);
+        if (graphData.nodes.length) { computeEdgeStatuses(); renderGraph(); }
         refreshCredentials();
     } catch (e) { showToast(e.message, "error"); }
 }
@@ -218,10 +231,10 @@ function initGraph() {
     svg = d3.select("#graph-svg");
     const defs = svg.append("defs");
 
-    // Arrow markers for each edge type
-    Object.entries(EDGE_STYLES).forEach(([type, style]) => {
+    // Arrow markers for each edge status
+    Object.entries(EDGE_STATUS_STYLES).forEach(([status, style]) => {
         defs.append("marker")
-            .attr("id", `arrow-${type}`)
+            .attr("id", `arrow-${status}`)
             .attr("viewBox", "0 -5 10 10").attr("refX", 22).attr("refY", 0)
             .attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto")
             .append("path").attr("d", "M0,-5L10,0L0,5")
@@ -231,7 +244,7 @@ function initGraph() {
     defs.append("marker").attr("id", "arrow-default")
         .attr("viewBox", "0 -5 10 10").attr("refX", 22).attr("refY", 0)
         .attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto")
-        .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#8b949e");
+        .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#484f58");
 
     const g = svg.append("g").attr("id", "graph-root");
     gLinks = g.append("g").attr("class", "links");
@@ -247,9 +260,28 @@ function initGraph() {
 async function loadGraphData() {
     try {
         graphData = await api("/api/graph");
+        computeEdgeStatuses();
         renderGraph();
         populatePathfinderDropdowns();
     } catch (e) { showToast("Failed to load graph: " + e.message, "error"); }
+}
+
+function computeEdgeStatuses() {
+    edgeStatus = {};
+    graphData.links.forEach(l => {
+        const src = typeof l.source === "object" ? l.source.id : l.source;
+        const key = edgeKey(l);
+        if (compromisedNodes.has(src)) {
+            edgeStatus[key] = "possible";
+        } else {
+            edgeStatus[key] = "blocked";
+        }
+    });
+}
+
+function getEdgeStyle(d) {
+    const status = edgeStatus[edgeKey(d)] || "blocked";
+    return EDGE_STATUS_STYLES[status] || EDGE_STATUS_STYLES.blocked;
 }
 
 function renderGraph() {
@@ -268,65 +300,154 @@ function renderGraph() {
     graphData.nodes.forEach(n => degreeMap[n.id] = 0);
     graphData.links.forEach(l => { degreeMap[l.source] = (degreeMap[l.source] || 0) + 1; degreeMap[l.target] = (degreeMap[l.target] || 0) + 1; });
 
+    // Build parallel-edge index for curving
+    const pairCount = {};
+    const pairIndex = {};
+    graphData.links.forEach(l => {
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        const pairKey = s < t ? `${s}||${t}` : `${t}||${s}`;
+        pairCount[pairKey] = (pairCount[pairKey] || 0) + 1;
+        pairIndex[edgeKey(l)] = pairCount[pairKey] - 1;
+    });
+
     // Clear previous
     gLinks.selectAll("*").remove();
     gLinkLabels.selectAll("*").remove();
     gNodes.selectAll("*").remove();
     gLabels.selectAll("*").remove();
 
-    // Links
-    const link = gLinks.selectAll("line").data(graphData.links).enter().append("line")
-        .attr("class", "link-line")
-        .attr("stroke", d => (EDGE_STYLES[d.type] || {}).color || "#8b949e")
-        .attr("stroke-width", 2)
-        .attr("stroke-dasharray", d => (EDGE_STYLES[d.type] || {}).dash || "")
-        .attr("marker-end", d => `url(#arrow-${EDGE_STYLES[d.type] ? d.type : "default"})`)
+    // Invisible wide hitbox paths for easier clicking
+    const linkHitbox = gLinks.selectAll("path.link-hitbox").data(graphData.links).enter().append("path")
+        .attr("class", "link-hitbox")
+        .attr("fill", "none")
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 16)
+        .style("cursor", "pointer")
         .attr("data-source", d => d.source)
         .attr("data-target", d => d.target)
         .attr("data-type", d => d.type)
         .on("click", (e, d) => openActionModal(d));
 
-    // Link labels
-    const linkLabel = gLinkLabels.selectAll("text").data(graphData.links).enter().append("text")
+    // Visible edge paths
+    const link = gLinks.selectAll("path.link-line").data(graphData.links).enter().append("path")
+        .attr("class", d => `link-line status-${edgeStatus[edgeKey(d)] || "blocked"}`)
+        .attr("fill", "none")
+        .attr("stroke", d => getEdgeStyle(d).color)
+        .attr("stroke-width", d => getEdgeStyle(d).width)
+        .attr("stroke-dasharray", d => getEdgeStyle(d).dash)
+        .attr("marker-end", d => { const st = edgeStatus[edgeKey(d)] || "blocked"; return `url(#arrow-${st})`; })
+        .attr("data-source", d => d.source)
+        .attr("data-target", d => d.target)
+        .attr("data-type", d => d.type)
+        .style("pointer-events", "none");
+
+    // Link labels — only visible on hover via CSS
+    const linkLabel = gLinkLabels.selectAll("g").data(graphData.links).enter().append("g")
+        .attr("class", "link-label-group");
+    linkLabel.append("rect").attr("class", "link-label-bg");
+    linkLabel.append("text")
         .attr("class", "link-label")
         .text(d => d.type);
 
     // Nodes
-    const node = gNodes.selectAll("circle").data(graphData.nodes).enter().append("circle")
+    const nodeG = gNodes.selectAll("g").data(graphData.nodes).enter().append("g")
+        .attr("class", "node-group")
+        .attr("data-id", d => d.id)
+        .on("mouseover", (e, d) => showTooltip(e, d))
+        .on("mouseout", hideTooltip)
+        .on("click", (e, d) => highlightConnected(d))
+        .call(d3.drag().on("start", dragStart).on("drag", dragging).on("end", dragEnd));
+
+    // Main circle
+    nodeG.append("circle")
         .attr("class", "node-circle")
         .attr("r", d => Math.max(8, Math.min(20, 8 + (degreeMap[d.id] || 0) * 2)))
         .attr("fill", d => NODE_COLORS[d.type] || NODE_COLORS.UNKNOWN)
         .attr("stroke", d => NODE_COLORS[d.type] || NODE_COLORS.UNKNOWN)
         .attr("stroke-width", 2)
         .attr("stroke-opacity", 0.3)
-        .attr("data-id", d => d.id)
-        .on("mouseover", (e, d) => showTooltip(e, d))
-        .on("mouseout", hideTooltip)
-        .on("click", (e, d) => highlightConnected(d))
-        .call(d3.drag()
-            .on("start", dragStart)
-            .on("drag", dragging)
-            .on("end", dragEnd));
+        .attr("data-id", d => d.id);
+
+    // Compromised glow ring
+    nodeG.filter(d => compromisedNodes.has(d.id)).append("circle")
+        .attr("class", "node-compromised-ring")
+        .attr("r", d => Math.max(8, Math.min(20, 8 + (degreeMap[d.id] || 0) * 2)) + 5)
+        .attr("fill", "none")
+        .attr("stroke", "#f85149")
+        .attr("stroke-width", 2)
+        .attr("stroke-dasharray", "4,3");
+
+    // Compromised icon
+    nodeG.filter(d => compromisedNodes.has(d.id)).append("text")
+        .attr("class", "node-compromised-icon")
+        .attr("dy", d => -(Math.max(8, Math.min(20, 8 + (degreeMap[d.id] || 0) * 2)) + 10))
+        .attr("text-anchor", "middle")
+        .attr("font-size", "12px")
+        .text("⚠");
 
     // Node labels
     const label = gLabels.selectAll("text").data(graphData.nodes).enter().append("text")
-        .attr("class", "node-label")
+        .attr("class", d => `node-label${compromisedNodes.has(d.id) ? " compromised" : ""}`)
         .text(d => d.name.length > 18 ? d.name.slice(0, 16) + "…" : d.name)
         .attr("dy", d => Math.max(8, Math.min(20, 8 + (degreeMap[d.id] || 0) * 2)) + 14);
 
     // Simulation
     if (simulation) simulation.stop();
     simulation = d3.forceSimulation(graphData.nodes)
-        .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(160))
-        .force("charge", d3.forceManyBody().strength(-400))
+        .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(300))
+        .force("charge", d3.forceManyBody().strength(-800))
         .force("center", d3.forceCenter(W / 2, H / 2))
-        .force("collision", d3.forceCollide().radius(30))
+        .force("collision", d3.forceCollide().radius(80))
         .on("tick", () => {
-            link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-            linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
-                     .attr("y", d => (d.source.y + d.target.y) / 2);
-            node.attr("cx", d => d.x).attr("cy", d => d.y);
+            // Shared path builder for curved edges
+            const buildPath = d => {
+                const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
+                const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
+                const sId = typeof d.source === "object" ? d.source.id : d.source;
+                const tId = typeof d.target === "object" ? d.target.id : d.target;
+                const pk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
+                const count = pairCount[pk] || 1;
+                const idx = pairIndex[edgeKey(d)] || 0;
+                if (count <= 1) {
+                    return `M${s.x},${s.y}L${t.x},${t.y}`;
+                }
+                const dx = t.x - s.x, dy = t.y - s.y;
+                const offset = (idx - (count - 1) / 2) * 30;
+                const mx = (s.x + t.x) / 2 - dy * offset / Math.max(Math.sqrt(dx*dx+dy*dy), 1) * 0.5;
+                const my = (s.y + t.y) / 2 + dx * offset / Math.max(Math.sqrt(dx*dx+dy*dy), 1) * 0.5;
+                return `M${s.x},${s.y}Q${mx},${my} ${t.x},${t.y}`;
+            };
+            link.attr("d", buildPath);
+            linkHitbox.attr("d", buildPath);
+            // Label positions at midpoint of curve
+            linkLabel.each(function(d) {
+                const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
+                const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
+                const sId = typeof d.source === "object" ? d.source.id : d.source;
+                const tId = typeof d.target === "object" ? d.target.id : d.target;
+                const pk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
+                const count = pairCount[pk] || 1;
+                const idx = pairIndex[edgeKey(d)] || 0;
+                const dx = t.x - s.x, dy = t.y - s.y;
+                const len = Math.max(Math.sqrt(dx*dx+dy*dy), 1);
+                let mx, my;
+                if (count <= 1) { mx = (s.x+t.x)/2; my = (s.y+t.y)/2; }
+                else {
+                    const offset = (idx - (count - 1) / 2) * 30;
+                    mx = (s.x+t.x)/2 - dy * offset / len * 0.5;
+                    my = (s.y+t.y)/2 + dx * offset / len * 0.5;
+                }
+                const g = d3.select(this);
+                const txt = g.select("text");
+                txt.attr("x", mx).attr("y", my);
+                const bbox = txt.node().getBBox();
+                g.select("rect")
+                    .attr("x", bbox.x - 3).attr("y", bbox.y - 1)
+                    .attr("width", bbox.width + 6).attr("height", bbox.height + 2)
+                    .attr("rx", 3);
+            });
+            nodeG.attr("transform", d => `translate(${d.x},${d.y})`);
             label.attr("x", d => d.x).attr("y", d => d.y);
         });
 }
@@ -350,7 +471,7 @@ function hideTooltip() { document.getElementById("node-tooltip").classList.remov
 // ── Highlight connected edges ────────────────────────────────────────
 function highlightConnected(d) {
     clearHighlights();
-    gLinks.selectAll("line").each(function() {
+    gLinks.selectAll("path").each(function() {
         const el = d3.select(this);
         if (el.attr("data-source") === d.id || el.attr("data-target") === d.id) {
             el.classed("highlighted", true);
@@ -359,8 +480,8 @@ function highlightConnected(d) {
 }
 
 function clearHighlights() {
-    gLinks.selectAll("line").classed("highlighted", false);
-    gNodes.selectAll("circle").classed("highlighted", false);
+    gLinks.selectAll("path").classed("highlighted", false);
+    gNodes.selectAll(".node-circle").classed("highlighted", false);
     document.querySelectorAll(".path-card").forEach(c => c.classList.remove("highlighted"));
 }
 
@@ -424,14 +545,14 @@ function highlightPath(path, cardEl) {
     path.forEach(step => {
         pathArns.add(step.from_arn);
         pathArns.add(step.to_arn);
-        gLinks.selectAll("line").each(function() {
+        gLinks.selectAll("path").each(function() {
             const el = d3.select(this);
             if (el.attr("data-source") === step.from_arn && el.attr("data-target") === step.to_arn) {
                 el.classed("highlighted", true);
             }
         });
     });
-    gNodes.selectAll("circle").each(function() {
+    gNodes.selectAll(".node-circle").each(function() {
         const el = d3.select(this);
         if (pathArns.has(el.attr("data-id"))) el.classed("highlighted", true);
     });
@@ -473,6 +594,26 @@ async function executeAction() {
         if (res.success) {
             area.innerHTML = `<div class="modal-result success">${JSON.stringify(res.result, null, 2)}</div>`;
             showToast("Action executed successfully.", "success");
+            // Mark this edge as taken and target as compromised
+            const key = `${srcId}|${tgtId}|${currentModal.type}`;
+            edgeStatus[key] = "taken";
+            compromisedNodes.add(tgtId);
+            // If we got new credentials, auto-register them
+            if (res.result.access_key_id) {
+                const credName = `${currentModal.type}-${tgtId.split('/').pop() || tgtId.split(':').pop()}`;
+                try {
+                    await api("/api/credentials", "POST", {
+                        name: credName,
+                        access_key_id: res.result.access_key_id,
+                        secret_access_key: res.result.secret_access_key,
+                        session_token: res.result.session_token || "",
+                    });
+                    showToast(`Credentials auto-saved as "${credName}".`, "info");
+                    refreshCredentials();
+                } catch(_) {}
+            }
+            computeEdgeStatuses();
+            renderGraph();
         } else {
             area.innerHTML = `<div class="modal-result error">${res.error}</div>`;
             showToast("Action failed.", "error");
