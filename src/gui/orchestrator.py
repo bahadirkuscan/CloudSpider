@@ -236,25 +236,18 @@ class Orchestrator:
 
     # ── Pathfinder ─────────────────────────────────────────────────────
 
-    def find_paths(self, start_arn: str, target_arn: str = None) -> List[List[Dict[str, str]]]:
-        """Find privilege escalation paths."""
-        analyst = PathfinderAnalyst(uri=self.neo4j_uri)
-        try:
-            paths = analyst.find_escalation_paths(start_arn, target_arn or None)
-            logger.info(f"Found {len(paths)} escalation path(s).")
-            return paths
-        finally:
-            analyst.close()
+    def find_paths(self, start_arn: str, target_arn: str) -> List[List[Dict[str, str]]]:
+        """Find privilege escalation paths from start_arn to target_arn.
 
-    def find_admin_paths(self) -> List[List[Dict[str, str]]]:
-        """Find all paths leading to admin-level nodes."""
-        analyst = PathfinderAnalyst(uri=self.neo4j_uri)
-        try:
-            paths = analyst.find_all_admin_paths()
-            logger.info(f"Found {len(paths)} admin path(s).")
-            return paths
-        finally:
-            analyst.close()
+        Uses the same graph data that the GUI visualizes — BFS in Python
+        over the nodes/links fetched from Neo4j.  If an edge is visible
+        on screen, this will find it.
+        """
+        graph_data = self.get_graph_data()
+        analyst = PathfinderAnalyst(graph_data)
+        paths = analyst.find_shortest_paths(start_arn, target_arn)
+        logger.info(f"Found {len(paths)} escalation path(s).")
+        return paths
 
     # ── Action Execution ───────────────────────────────────────────────
 

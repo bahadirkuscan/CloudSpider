@@ -1,69 +1,98 @@
 import logging
-from neo4j import GraphDatabase
-from typing import List, Dict, Any, Optional
-from src.pathfinder import queries
+from collections import deque
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
 class PathfinderAnalyst:
     """
-    Interfaces with Neo4j to find and extract privilege escalation paths 
-    using Cypher queries.
+    Finds privilege escalation paths using BFS over in-memory graph data.
+    Takes the same node/link data that the GUI visualizes — if an edge is
+    visible on screen, the pathfinder will find it.
     """
-    def __init__(self, uri="bolt://localhost:7687"):
-        self.uri = uri
-        self.driver = GraphDatabase.driver(self.uri)
-        
-    def close(self):
-        self.driver.close()
-        
-    def _parse_path(self, path_obj) -> List[Dict[str, str]]:
-        """Parses a Neo4j path object into a list of generic step dictionaries"""
-        parsed_path = []
-        for rel in path_obj.relationships:
-            start_node = rel.start_node
-            end_node = rel.end_node
-            rel_type = type(rel).__name__
-            
-            parsed_path.append({
-                "from_arn": start_node.get("arn", "UNKNOWN"),
-                "from_name": start_node.get("name", "UNKNOWN"),
-                "to_arn": end_node.get("arn", "UNKNOWN"),
-                "to_name": end_node.get("name", "UNKNOWN"),
-                "relationship": rel.type
-            })
-        return parsed_path
 
-    def find_escalation_paths(self, start_arn: str, target_arn: Optional[str] = None) -> List[List[Dict[str, str]]]:
+    def __init__(self, graph_data: Dict[str, Any]):
         """
-        Finds privilege escalation paths from a starting ARN.
-        If target_arn is specified, finds shortest paths directly to that target.
+        Args:
+            graph_data: dict with 'nodes' and 'links' lists, exactly as
+                        returned by Orchestrator.get_graph_data().
         """
-        paths = []
-        with self.driver.session() as session:
-            if target_arn:
-                logger.info(f"Finding path from {start_arn} to {target_arn}")
-                result = session.run(queries.SHORTEST_PATH_GENERAL, start_arn=start_arn, target_arn=target_arn)
-            else:
-                logger.info(f"Finding all known escalation paths from {start_arn}")
-                result = session.run(queries.ALL_ESCALATION_PATHS_FROM_START, start_arn=start_arn)
-                
-            for record in result:
-                if "p" in record and record["p"] is not None:
-                    paths.append(self._parse_path(record["p"]))
-                    
-        return paths
+        self.nodes = graph_data.get("nodes", [])
+        self.links = graph_data.get("links", [])
 
-    def find_all_admin_paths(self) -> List[List[Dict[str, str]]]:
+        # Build adjacency list: source_arn -> [(target_arn, rel_type), ...]
+        self._adj: Dict[str, List[tuple]] = {}
+        for link in self.links:
+            src = link["source"]
+            tgt = link["target"]
+            rel = link["type"]
+            self._adj.setdefault(src, []).append((tgt, rel))
+
+        # Name lookup: arn -> friendly name
+        self._names: Dict[str, str] = {n["id"]: n["name"] for n in self.nodes}
+
+        logger.info(
+            f"PathfinderAnalyst loaded: {len(self.nodes)} nodes, "
+            f"{len(self.links)} edges, {len(self._adj)} sources with outgoing edges."
+        )
+
+    # ── Public API ─────────────────────────────────────────────────────
+
+    def find_shortest_paths(self, start_arn: str, target_arn: str) -> List[List[Dict[str, str]]]:
         """
-        Finds all known paths that lead to highly privileged nodes.
+        BFS from start_arn to target_arn.  Returns all shortest paths
+        (same hop-count).  Each path is a list of edge dicts with keys:
+        from_arn, from_name, to_arn, to_name, relationship.
         """
-        paths = []
-        logger.info("Finding paths to nodes with administrative reach...")
-        with self.driver.session() as session:
-            result = session.run(queries.ALL_ADMIN_PATHS)
-            for record in result:
-                if "p" in record and record["p"] is not None:
-                    paths.append(self._parse_path(record["p"]))
-                    
-        return paths
+        if start_arn not in self._names:
+            logger.warning(f"Start node not found in graph: {start_arn}")
+            return []
+        if target_arn not in self._names:
+            logger.warning(f"Target node not found in graph: {target_arn}")
+            return []
+        if start_arn == target_arn:
+            logger.warning("Start and target are the same node.")
+            return []
+
+        # BFS — track ALL shortest paths (same depth)
+        queue: deque = deque([(start_arn, [])])
+        # For each node, record the shortest distance we've reached it at.
+        # We allow re-visiting at the SAME depth to capture parallel shortest paths.
+        best_dist: Dict[str, int] = {start_arn: 0}
+        found: List[List[Dict[str, str]]] = []
+        target_depth = None
+
+        while queue:
+            current, path = queue.popleft()
+            depth = len(path)
+
+            # If we already found the target at a shorter depth, stop
+            if target_depth is not None and depth > target_depth:
+                break
+
+            if current == target_arn:
+                found.append(path)
+                target_depth = depth
+                continue  # keep draining this depth level
+
+            for neighbor, rel_type in self._adj.get(current, []):
+                next_depth = depth + 1
+                # Only visit if we haven't reached this node at a shorter distance
+                if neighbor not in best_dist or best_dist[neighbor] >= next_depth:
+                    best_dist[neighbor] = next_depth
+                    step = {
+                        "from_arn": current,
+                        "from_name": self._names.get(current, current),
+                        "to_arn": neighbor,
+                        "to_name": self._names.get(neighbor, neighbor),
+                        "relationship": rel_type,
+                    }
+                    queue.append((neighbor, path + [step]))
+
+        logger.info(
+            f"Pathfinder: {start_arn} -> {target_arn}: "
+            f"found {len(found)} shortest path(s)"
+            + (f" ({target_depth} hop(s) each)." if found else ".")
+        )
+        return found
