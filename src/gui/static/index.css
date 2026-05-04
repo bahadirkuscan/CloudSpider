@@ -573,12 +573,43 @@ select.form-input {
     stroke-opacity: 1;
 }
 
+/* Status-based edge styles */
+.link-line.status-taken  { stroke-opacity: 0.85; }
+.link-line.status-possible { stroke-opacity: 0.7; }
+.link-line.status-blocked  { stroke-opacity: 0.3; }
+
+/* Edge labels: hidden by default, shown on hover */
+.link-label-group {
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.link-label-bg {
+    fill: var(--bg-secondary);
+    fill-opacity: 0.9;
+    stroke: var(--glass-border);
+    stroke-width: 0.5;
+}
+
 .link-label {
     font-family: 'JetBrains Mono', monospace;
     font-size: 9px;
-    fill: var(--text-muted);
-    pointer-events: none;
+    fill: var(--text-primary);
     text-anchor: middle;
+    dominant-baseline: central;
+}
+
+/* Show labels on edge hover — use sibling group matching via JS class */
+.links path.link-line:hover ~ .link-labels .link-label-group,
+.link-label-group:hover,
+.link-label-group.visible {
+    opacity: 1;
+}
+
+/* Show all labels when hovering over the link-labels layer */
+#graph-root:hover .link-label-group {
+    opacity: 1;
 }
 
 /* Path highlight animation */
@@ -599,6 +630,26 @@ select.form-input {
 @keyframes node-pulse {
     from { filter: brightness(1); }
     to { filter: brightness(1.5) drop-shadow(0 0 10px var(--accent-cyan)); }
+}
+
+/* Compromised node styles */
+.node-compromised-ring {
+    animation: compromised-pulse 2s ease-in-out infinite;
+}
+
+@keyframes compromised-pulse {
+    0%, 100% { stroke-opacity: 0.4; stroke: #f85149; }
+    50% { stroke-opacity: 1; stroke: #ff6e6a; filter: drop-shadow(0 0 6px rgba(248,81,73,0.5)); }
+}
+
+.node-compromised-icon {
+    fill: #f85149;
+    filter: drop-shadow(0 0 4px rgba(248,81,73,0.6));
+}
+
+.node-label.compromised {
+    fill: #f85149;
+    font-weight: 600;
 }
 
 /* Canvas legend */
