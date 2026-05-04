@@ -140,18 +140,10 @@ def query_paths():
     data = request.json or {}
     start_arn = data.get("start_arn")
     target_arn = data.get("target_arn")
-    if not start_arn:
-        return jsonify({"error": "start_arn is required."}), 400
+    if not start_arn or not target_arn:
+        return jsonify({"error": "Both start_arn and target_arn are required."}), 400
     try:
         paths = orchestrator.find_paths(start_arn, target_arn)
-        return jsonify({"status": "ok", "paths": paths, "count": len(paths)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/pathfinder/admin", methods=["GET"])
-def query_admin_paths():
-    try:
-        paths = orchestrator.find_admin_paths()
         return jsonify({"status": "ok", "paths": paths, "count": len(paths)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

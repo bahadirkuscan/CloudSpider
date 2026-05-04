@@ -103,30 +103,30 @@
             <!-- Pathfinder -->
             <div class="sidebar-section" id="section-pathfinder">
                 <div class="sidebar-section-header" onclick="toggleSection('section-pathfinder')">
-                    <span class="icon">🔍</span>
+                    <span class="icon">🧭</span>
                     <span>Pathfinder</span>
                     <span class="chevron">▶</span>
                 </div>
                 <div class="sidebar-section-body">
                     <div class="section-content">
                         <div class="form-group">
-                            <label for="path-start">Start Node (ARN)</label>
+                            <label for="path-start">Source Node</label>
                             <select id="path-start" class="form-input">
-                                <option value="">— Select a node —</option>
+                                <option value="">— Select source —</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="path-target">Target Node (optional)</label>
+                            <label for="path-target">Target Node</label>
                             <select id="path-target" class="form-input">
-                                <option value="">— Any target —</option>
+                                <option value="">— Select target —</option>
                             </select>
                         </div>
                         <div class="btn-group">
                             <button id="btn-find-paths" class="btn btn-primary flex-1" onclick="findPaths()">
                                 <span class="spinner"></span>
-                                Find Paths
+                                Find Path
                             </button>
-                            <button class="btn btn-ghost" onclick="clearHighlights()">Clear</button>
+                            <button class="btn btn-ghost" onclick="clearPathfinder()">Clear</button>
                         </div>
                         <div id="path-results" class="path-results"></div>
                     </div>

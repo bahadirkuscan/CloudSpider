@@ -489,11 +489,15 @@ function clearHighlights() {
 // ── Pathfinder ───────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 
+// Tracks the currently displayed path for step-by-step execution
+let activePath = null;
+let activePathIndex = 0; // which step to execute next
+
 function populatePathfinderDropdowns() {
     const startSel = document.getElementById("path-start");
     const targetSel = document.getElementById("path-target");
-    startSel.innerHTML = '<option value="">— Select a node —</option>';
-    targetSel.innerHTML = '<option value="">— Any target —</option>';
+    startSel.innerHTML = '<option value="">— Select source —</option>';
+    targetSel.innerHTML = '<option value="">— Select target —</option>';
     graphData.nodes.forEach(n => {
         const opt1 = document.createElement("option"); opt1.value = n.id; opt1.textContent = `${n.name} (${n.type})`;
         const opt2 = opt1.cloneNode(true);
@@ -504,13 +508,19 @@ function populatePathfinderDropdowns() {
 
 async function findPaths() {
     const startArn = document.getElementById("path-start").value;
-    if (!startArn) return showToast("Select a start node.", "error");
-    const targetArn = document.getElementById("path-target").value || undefined;
+    const targetArn = document.getElementById("path-target").value;
+    if (!startArn) return showToast("Select a source node.", "error");
+    if (!targetArn) return showToast("Select a target node.", "error");
+    if (startArn === targetArn) return showToast("Source and target must be different.", "error");
     setLoading("btn-find-paths", true);
     try {
         const res = await api("/api/pathfinder/query", "POST", { start_arn: startArn, target_arn: targetArn });
         renderPathResults(res.paths);
-        showToast(`Found ${res.count} path(s).`, "info");
+        if (res.count > 0) {
+            showToast(`Found ${res.count} path(s) — ${res.paths[0].length} edge(s) in shortest path.`, "info");
+        } else {
+            showToast("No path found between these nodes.", "info");
+        }
     } catch (e) { showToast(e.message, "error"); }
     setLoading("btn-find-paths", false);
 }
@@ -518,24 +528,84 @@ async function findPaths() {
 function renderPathResults(paths) {
     const container = document.getElementById("path-results");
     container.innerHTML = "";
-    if (!paths.length) { container.innerHTML = '<p class="text-muted" style="font-size:12px;padding:8px 0">No paths found.</p>'; return; }
+    activePath = null;
+    activePathIndex = 0;
+
+    if (!paths.length) {
+        container.innerHTML = '<p class="text-muted" style="font-size:12px;padding:8px 0">No paths found.</p>';
+        return;
+    }
+
     paths.forEach((path, idx) => {
         const card = document.createElement("div");
         card.className = "path-card";
-        card.onclick = () => highlightPath(path, card);
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:var(--accent-cyan)">Path ${idx + 1} (${path.length} hop${path.length > 1 ? "s" : ""})</div>`;
-        path.forEach(step => {
-            html += `<div class="path-step">
-                <span>${step.from_name}</span>
-                <span class="arrow">→</span>
-                <span class="rel">${step.relationship}</span>
-                <span class="arrow">→</span>
-                <span>${step.to_name}</span>
+        card.id = `path-card-${idx}`;
+
+        let html = `<div class="path-card-header">
+            <span style="font-weight:600;color:var(--accent-cyan)">Path ${idx + 1}</span>
+            <span class="text-muted" style="font-size:11px">${path.length} edge${path.length > 1 ? "s" : ""}</span>
+        </div>`;
+
+        // Render each edge/step
+        html += '<div class="path-steps">';
+        path.forEach((step, stepIdx) => {
+            const stepId = `path-${idx}-step-${stepIdx}`;
+            html += `<div class="path-step-row" id="${stepId}" data-path="${idx}" data-step="${stepIdx}">
+                <div class="path-step-number">${stepIdx + 1}</div>
+                <div class="path-step-detail">
+                    <div class="path-step-nodes">
+                        <span class="node-name">${step.from_name}</span>
+                        <span class="path-step-arrow">→</span>
+                        <span class="edge-type">${step.relationship}</span>
+                        <span class="path-step-arrow">→</span>
+                        <span class="node-name">${step.to_name}</span>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-execute-step" id="${stepId}-btn"
+                    onclick="executePathStep(${idx}, ${stepIdx})"
+                    title="Execute this step">▶</button>
             </div>`;
         });
+        html += '</div>';
+
+        // Action buttons
+        html += `<div class="path-action-bar">
+            <button class="btn btn-sm btn-primary flex-1" onclick="highlightAndSelectPath(${idx})">
+                🔍 Highlight
+            </button>
+            <button class="btn btn-sm btn-danger flex-1" id="btn-exec-all-${idx}" onclick="executeAllSteps(${idx})">
+                ⚡ Execute All
+            </button>
+        </div>`;
+
         card.innerHTML = html;
         container.appendChild(card);
     });
+
+    // Store paths globally for execution
+    window._pathfinderPaths = paths;
+
+    // Auto-highlight the first path
+    if (paths.length > 0) {
+        highlightAndSelectPath(0);
+    }
+}
+
+function highlightAndSelectPath(pathIdx) {
+    const path = window._pathfinderPaths[pathIdx];
+    if (!path) return;
+
+    clearHighlights();
+    activePath = path;
+    activePathIndex = 0;
+
+    // Highlight the card
+    document.querySelectorAll(".path-card").forEach(c => c.classList.remove("highlighted"));
+    const card = document.getElementById(`path-card-${pathIdx}`);
+    if (card) card.classList.add("highlighted");
+
+    // Highlight path on graph
+    highlightPath(path);
 }
 
 function highlightPath(path, cardEl) {
@@ -556,6 +626,91 @@ function highlightPath(path, cardEl) {
         const el = d3.select(this);
         if (pathArns.has(el.attr("data-id"))) el.classed("highlighted", true);
     });
+}
+
+async function executePathStep(pathIdx, stepIdx) {
+    const path = window._pathfinderPaths[pathIdx];
+    if (!path || !path[stepIdx]) return;
+
+    const step = path[stepIdx];
+    const btnId = `path-${pathIdx}-step-${stepIdx}-btn`;
+    const rowEl = document.getElementById(`path-${pathIdx}-step-${stepIdx}`);
+    const btn = document.getElementById(btnId);
+
+    if (btn) { btn.disabled = true; btn.textContent = "⏳"; }
+
+    try {
+        const res = await api("/api/action/execute", "POST", {
+            edge_type: step.relationship,
+            source_arn: step.from_arn,
+            target_arn: step.to_arn,
+        });
+
+        if (res.success) {
+            // Mark step as done
+            if (rowEl) rowEl.classList.add("step-done");
+            if (btn) { btn.textContent = "✓"; btn.classList.add("step-success"); }
+            showToast(`Step ${stepIdx + 1} executed: ${step.relationship}`, "success");
+
+            // Update edge and node status
+            const key = `${step.from_arn}|${step.to_arn}|${step.relationship}`;
+            edgeStatus[key] = "taken";
+            compromisedNodes.add(step.to_arn);
+
+            // Auto-register credentials if returned
+            if (res.result.access_key_id) {
+                const credName = `${step.relationship}-${step.to_name}`;
+                try {
+                    await api("/api/credentials", "POST", {
+                        name: credName,
+                        access_key_id: res.result.access_key_id,
+                        secret_access_key: res.result.secret_access_key,
+                        session_token: res.result.session_token || "",
+                    });
+                    showToast(`Credentials saved as "${credName}".`, "info");
+                    refreshCredentials();
+                } catch(_) {}
+            }
+
+            computeEdgeStatuses();
+            renderGraph();
+        } else {
+            if (rowEl) rowEl.classList.add("step-failed");
+            if (btn) { btn.textContent = "✕"; btn.classList.add("step-error"); }
+            showToast(`Step ${stepIdx + 1} failed: ${res.error}`, "error");
+        }
+    } catch (e) {
+        if (rowEl) rowEl.classList.add("step-failed");
+        if (btn) { btn.textContent = "✕"; btn.classList.add("step-error"); }
+        showToast(`Step ${stepIdx + 1} error: ${e.message}`, "error");
+    }
+}
+
+async function executeAllSteps(pathIdx) {
+    const path = window._pathfinderPaths[pathIdx];
+    if (!path) return;
+
+    const allBtn = document.getElementById(`btn-exec-all-${pathIdx}`);
+    if (allBtn) { allBtn.disabled = true; allBtn.textContent = "⏳ Executing..."; }
+
+    for (let i = 0; i < path.length; i++) {
+        await executePathStep(pathIdx, i);
+        // Small delay between steps for readability
+        if (i < path.length - 1) await new Promise(r => setTimeout(r, 500));
+    }
+
+    if (allBtn) { allBtn.textContent = "✓ Done"; allBtn.classList.remove("btn-danger"); allBtn.classList.add("btn-success"); }
+    showToast("All path steps executed.", "success");
+}
+
+function clearPathfinder() {
+    clearHighlights();
+    activePath = null;
+    activePathIndex = 0;
+    window._pathfinderPaths = [];
+    document.getElementById("path-results").innerHTML = "";
+    document.getElementById("path-start").value = "";
+    document.getElementById("path-target").value = "";
 }
 
 // ══════════════════════════════════════════════════════════════════════
