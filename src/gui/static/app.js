@@ -12,6 +12,8 @@ let logCount = 0;
 let compromisedNodes = new Set();
 // Tracks edge action status: key = "source|target|type", value = "taken"|"possible"|"blocked"
 let edgeStatus = {};
+// Tracks manual edge offsets from label dragging: key = edgeKey, value = offset number
+let edgeManualOffset = {};
 
 function edgeKey(d) {
     const s = typeof d.source === "object" ? d.source.id : d.source;
@@ -25,12 +27,21 @@ const NODE_COLORS = {
     STORAGE: "#3fb950", GROUP: "#e3b341", UNKNOWN: "#8b949e"
 };
 
-// Edge status styles: taken = green solid, possible = amber dashed, blocked = gray dotted
+// Edge status styles: taken = green solid, possible = amber dashed, blocked = gray dotted, false_positive = dashed red
 const EDGE_STATUS_STYLES = {
     taken: { color: "#3fb950", dash: "", width: 2.5 },
     possible: { color: "#f0883e", dash: "8,4", width: 2 },
-    blocked: { color: "#484f58", dash: "3,5", width: 1.5 }
+    blocked: { color: "#484f58", dash: "3,5", width: 1.5 },
+    false_positive: { color: "#f85149", dash: "6,4", width: 1.5 }
 };
+
+// Filter visibility state
+let visibleNodeIds = new Set();
+let visibleEdgeTypes = new Set();
+let filterInitialized = false;
+
+// Tracks the initial compromised ARN from active profile activation
+let initialCompromisedArn = null;
 
 // ── Init ─────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -165,7 +176,8 @@ async function activateProfile(name) {
     try {
         const res = await api(`/api/credentials/${name}/activate`, "POST");
         showToast(`Profile "${name}" activated. Identity: ${res.identity.arn}`, "success");
-        // Mark the user's ARN as compromised
+        // Mark the user's ARN as compromised and persist it
+        initialCompromisedArn = res.identity.arn;
         compromisedNodes.add(res.identity.arn);
         if (graphData.nodes.length) { computeEdgeStatuses(); renderGraph(); }
         refreshCredentials();
@@ -260,17 +272,21 @@ function initGraph() {
 async function loadGraphData() {
     try {
         graphData = await api("/api/graph");
+        // Re-apply initial compromised node from active profile
+        if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
         computeEdgeStatuses();
+        populateFilterCheckboxes();
         renderGraph();
         populatePathfinderDropdowns();
     } catch (e) { showToast("Failed to load graph: " + e.message, "error"); }
 }
 
 function computeEdgeStatuses() {
-    edgeStatus = {};
     graphData.links.forEach(l => {
         const src = typeof l.source === "object" ? l.source.id : l.source;
         const key = edgeKey(l);
+        // Preserve taken and false_positive statuses across re-renders
+        if (edgeStatus[key] === "taken" || edgeStatus[key] === "false_positive") return;
         if (compromisedNodes.has(src)) {
             edgeStatus[key] = "possible";
         } else {
@@ -295,20 +311,44 @@ function renderGraph() {
     emptyMsg.classList.add("hidden");
     legend.classList.remove("hidden");
 
+    // Apply filters — only show visible nodes (by ID) and edge types
+    const filteredNodes = graphData.nodes.filter(n => visibleNodeIds.has(n.id));
+    const filteredNodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const filteredLinks = graphData.links.filter(l => {
+        const sId = typeof l.source === "object" ? l.source.id : l.source;
+        const tId = typeof l.target === "object" ? l.target.id : l.target;
+        return visibleEdgeTypes.has(l.type) && filteredNodeIdSet.has(sId) && filteredNodeIdSet.has(tId);
+    });
+
     // Compute degree for sizing
     const degreeMap = {};
-    graphData.nodes.forEach(n => degreeMap[n.id] = 0);
-    graphData.links.forEach(l => { degreeMap[l.source] = (degreeMap[l.source] || 0) + 1; degreeMap[l.target] = (degreeMap[l.target] || 0) + 1; });
+    filteredNodes.forEach(n => degreeMap[n.id] = 0);
+    filteredLinks.forEach(l => {
+        const sId = typeof l.source === "object" ? l.source.id : l.source;
+        const tId = typeof l.target === "object" ? l.target.id : l.target;
+        degreeMap[sId] = (degreeMap[sId] || 0) + 1;
+        degreeMap[tId] = (degreeMap[tId] || 0) + 1;
+    });
 
-    // Build parallel-edge index for curving
+    // Build direction-aware parallel-edge index for curving
+    // Each directed edge between A→B and B→A gets separate offsets
     const pairCount = {};
     const pairIndex = {};
-    graphData.links.forEach(l => {
+    filteredLinks.forEach(l => {
         const s = typeof l.source === "object" ? l.source.id : l.source;
         const t = typeof l.target === "object" ? l.target.id : l.target;
-        const pairKey = s < t ? `${s}||${t}` : `${t}||${s}`;
+        // Use ordered pair key for same-direction grouping
+        const pairKey = `${s}||${t}`;
         pairCount[pairKey] = (pairCount[pairKey] || 0) + 1;
         pairIndex[edgeKey(l)] = pairCount[pairKey] - 1;
+    });
+    // Compute total edges between any two nodes (both directions)
+    const biCount = {};
+    filteredLinks.forEach(l => {
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        const bk = s < t ? `${s}||${t}` : `${t}||${s}`;
+        biCount[bk] = (biCount[bk] || 0) + 1;
     });
 
     // Clear previous
@@ -317,41 +357,102 @@ function renderGraph() {
     gNodes.selectAll("*").remove();
     gLabels.selectAll("*").remove();
 
-    // Invisible wide hitbox paths for easier clicking
-    const linkHitbox = gLinks.selectAll("path.link-hitbox").data(graphData.links).enter().append("path")
+    // Invisible wide hitbox paths for easier clicking — blocked edges are NOT clickable
+    const linkHitbox = gLinks.selectAll("path.link-hitbox").data(filteredLinks).enter().append("path")
         .attr("class", "link-hitbox")
         .attr("fill", "none")
         .attr("stroke", "transparent")
-        .attr("stroke-width", 16)
-        .style("cursor", "pointer")
-        .attr("data-source", d => d.source)
-        .attr("data-target", d => d.target)
+        .attr("stroke-width", 18)
+        .style("cursor", d => {
+            const st = edgeStatus[edgeKey(d)] || "blocked";
+            return st === "blocked" ? "default" : "pointer";
+        })
+        .attr("data-source", d => typeof d.source === "object" ? d.source.id : d.source)
+        .attr("data-target", d => typeof d.target === "object" ? d.target.id : d.target)
         .attr("data-type", d => d.type)
-        .on("click", (e, d) => openActionModal(d));
+        .on("click", (e, d) => {
+            const st = edgeStatus[edgeKey(d)] || "blocked";
+            if (st !== "blocked") openActionModal(d);
+        });
 
     // Visible edge paths
-    const link = gLinks.selectAll("path.link-line").data(graphData.links).enter().append("path")
+    const link = gLinks.selectAll("path.link-line").data(filteredLinks).enter().append("path")
         .attr("class", d => `link-line status-${edgeStatus[edgeKey(d)] || "blocked"}`)
         .attr("fill", "none")
         .attr("stroke", d => getEdgeStyle(d).color)
         .attr("stroke-width", d => getEdgeStyle(d).width)
         .attr("stroke-dasharray", d => getEdgeStyle(d).dash)
         .attr("marker-end", d => { const st = edgeStatus[edgeKey(d)] || "blocked"; return `url(#arrow-${st})`; })
-        .attr("data-source", d => d.source)
-        .attr("data-target", d => d.target)
+        .attr("data-source", d => typeof d.source === "object" ? d.source.id : d.source)
+        .attr("data-target", d => typeof d.target === "object" ? d.target.id : d.target)
         .attr("data-type", d => d.type)
         .style("pointer-events", "none");
 
-    // Link labels — only visible on hover via CSS
-    const linkLabel = gLinkLabels.selectAll("g").data(graphData.links).enter().append("g")
-        .attr("class", "link-label-group");
+    // Shared path builder for direction-aware curved edges (hoisted for drag + tick access)
+    const buildPath = d => {
+        const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
+        const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
+        const sId = typeof d.source === "object" ? d.source.id : d.source;
+        const tId = typeof d.target === "object" ? d.target.id : d.target;
+        const dpk = `${sId}||${tId}`;
+        const dirCount = pairCount[dpk] || 1;
+        const dirIdx = pairIndex[edgeKey(d)] || 0;
+        const rpk = `${tId}||${sId}`;
+        const hasReverse = (pairCount[rpk] || 0) > 0;
+        const bk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
+        const totalEdges = biCount[bk] || 1;
+        const manual = edgeManualOffset[edgeKey(d)] || 0;
+
+        const canonFirst = sId < tId;
+        const cdx = canonFirst ? (t.x - s.x) : (s.x - t.x);
+        const cdy = canonFirst ? (t.y - s.y) : (s.y - t.y);
+        const clen = Math.max(Math.sqrt(cdx * cdx + cdy * cdy), 1);
+
+        if (totalEdges <= 1 && dirCount <= 1 && manual === 0) {
+            return `M${s.x},${s.y}L${t.x},${t.y}`;
+        }
+        let baseOffset = hasReverse ? (canonFirst ? 1 : -1) * 50 : 0;
+        const spreadOffset = (dirIdx - (dirCount - 1) / 2) * 80;
+        const totalOffset = baseOffset + spreadOffset + manual;
+        const mx = (s.x + t.x) / 2 - cdy * totalOffset / clen * 0.5;
+        const my = (s.y + t.y) / 2 + cdx * totalOffset / clen * 0.5;
+        return `M${s.x},${s.y}Q${mx},${my} ${t.x},${t.y}`;
+    };
+
+    // Link labels — always visible, draggable to reposition edges
+    const linkLabel = gLinkLabels.selectAll("g").data(filteredLinks).enter().append("g")
+        .attr("class", "link-label-group")
+        .style("cursor", "grab")
+        .call(d3.drag()
+            .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
+            .on("drag", function (event, d) {
+                const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
+                const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
+                const sId = typeof d.source === "object" ? d.source.id : d.source;
+                const tId = typeof d.target === "object" ? d.target.id : d.target;
+                const canonFirst = sId < tId;
+                const cdx = canonFirst ? (t.x - s.x) : (s.x - t.x);
+                const cdy = canonFirst ? (t.y - s.y) : (s.y - t.y);
+                const clen = Math.max(Math.sqrt(cdx * cdx + cdy * cdy), 1);
+                const perpX = -cdy / clen;
+                const perpY = cdx / clen;
+                const delta = event.dx * perpX + event.dy * perpY;
+                const key = edgeKey(d);
+                edgeManualOffset[key] = (edgeManualOffset[key] || 0) + delta;
+                // Rebuild paths and reposition labels immediately
+                link.attr("d", buildPath);
+                linkHitbox.attr("d", buildPath);
+                updateLabelPositions();
+            })
+            .on("end", function () { d3.select(this).style("cursor", "grab"); })
+        );
     linkLabel.append("rect").attr("class", "link-label-bg");
     linkLabel.append("text")
         .attr("class", "link-label")
         .text(d => d.type);
 
     // Nodes
-    const nodeG = gNodes.selectAll("g").data(graphData.nodes).enter().append("g")
+    const nodeG = gNodes.selectAll("g").data(filteredNodes).enter().append("g")
         .attr("class", "node-group")
         .attr("data-id", d => d.id)
         .on("mouseover", (e, d) => showTooltip(e, d))
@@ -387,74 +488,75 @@ function renderGraph() {
         .text("⚠");
 
     // Node labels
-    const label = gLabels.selectAll("text").data(graphData.nodes).enter().append("text")
+    const label = gLabels.selectAll("text").data(filteredNodes).enter().append("text")
         .attr("class", d => `node-label${compromisedNodes.has(d.id) ? " compromised" : ""}`)
         .text(d => d.name.length > 18 ? d.name.slice(0, 16) + "…" : d.name)
         .attr("dy", d => Math.max(8, Math.min(20, 8 + (degreeMap[d.id] || 0) * 2)) + 14);
 
-    // Simulation
+    // Helper to update label positions (used by both tick and drag)
+    function updateLabelPositions() {
+        linkLabel.each(function (d) {
+            const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
+            const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
+            const sId = typeof d.source === "object" ? d.source.id : d.source;
+            const tId = typeof d.target === "object" ? d.target.id : d.target;
+            const dpk = `${sId}||${tId}`;
+            const dirCount = pairCount[dpk] || 1;
+            const dirIdx = pairIndex[edgeKey(d)] || 0;
+            const rpk = `${tId}||${sId}`;
+            const hasReverse = (pairCount[rpk] || 0) > 0;
+            const bk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
+            const totalEdges = biCount[bk] || 1;
+            const manual = edgeManualOffset[edgeKey(d)] || 0;
+            const canonFirst = sId < tId;
+            const cdx = canonFirst ? (t.x - s.x) : (s.x - t.x);
+            const cdy = canonFirst ? (t.y - s.y) : (s.y - t.y);
+            const clen = Math.max(Math.sqrt(cdx * cdx + cdy * cdy), 1);
+            let mx, my;
+            if (totalEdges <= 1 && dirCount <= 1 && manual === 0) {
+                mx = (s.x + t.x) / 2; my = (s.y + t.y) / 2;
+            } else {
+                let baseOffset = hasReverse ? (canonFirst ? 1 : -1) * 50 : 0;
+                const spreadOffset = (dirIdx - (dirCount - 1) / 2) * 80;
+                const totalOffset = baseOffset + spreadOffset + manual;
+                // Control point of the quadratic Bezier
+                const cx = (s.x + t.x) / 2 - cdy * totalOffset / clen * 0.5;
+                const cy = (s.y + t.y) / 2 + cdx * totalOffset / clen * 0.5;
+                // Actual curve midpoint at t=0.5: (start + 2*control + end) / 4
+                mx = (s.x + 2 * cx + t.x) / 4;
+                my = (s.y + 2 * cy + t.y) / 4;
+            }
+            const g = d3.select(this);
+            const txt = g.select("text");
+            txt.attr("x", mx).attr("y", my);
+            const bbox = txt.node().getBBox();
+            g.select("rect")
+                .attr("x", bbox.x - 3).attr("y", bbox.y - 1)
+                .attr("width", bbox.width + 6).attr("height", bbox.height + 2)
+                .attr("rx", 3);
+        });
+    }
+
+    // Simulation — increased spacing to reduce overlaps
     if (simulation) simulation.stop();
-    simulation = d3.forceSimulation(graphData.nodes)
-        .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(300))
-        .force("charge", d3.forceManyBody().strength(-800))
+    simulation = d3.forceSimulation(filteredNodes)
+        .force("link", d3.forceLink(filteredLinks).id(d => d.id).distance(400))
+        .force("charge", d3.forceManyBody().strength(-1200))
         .force("center", d3.forceCenter(W / 2, H / 2))
-        .force("collision", d3.forceCollide().radius(80))
+        .force("collision", d3.forceCollide().radius(100))
         .on("tick", () => {
-            // Shared path builder for curved edges
-            const buildPath = d => {
-                const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
-                const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
-                const sId = typeof d.source === "object" ? d.source.id : d.source;
-                const tId = typeof d.target === "object" ? d.target.id : d.target;
-                const pk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
-                const count = pairCount[pk] || 1;
-                const idx = pairIndex[edgeKey(d)] || 0;
-                if (count <= 1) {
-                    return `M${s.x},${s.y}L${t.x},${t.y}`;
-                }
-                const dx = t.x - s.x, dy = t.y - s.y;
-                const offset = (idx - (count - 1) / 2) * 30;
-                const mx = (s.x + t.x) / 2 - dy * offset / Math.max(Math.sqrt(dx * dx + dy * dy), 1) * 0.5;
-                const my = (s.y + t.y) / 2 + dx * offset / Math.max(Math.sqrt(dx * dx + dy * dy), 1) * 0.5;
-                return `M${s.x},${s.y}Q${mx},${my} ${t.x},${t.y}`;
-            };
             link.attr("d", buildPath);
             linkHitbox.attr("d", buildPath);
-            // Label positions at midpoint of curve
-            linkLabel.each(function (d) {
-                const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
-                const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
-                const sId = typeof d.source === "object" ? d.source.id : d.source;
-                const tId = typeof d.target === "object" ? d.target.id : d.target;
-                const pk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
-                const count = pairCount[pk] || 1;
-                const idx = pairIndex[edgeKey(d)] || 0;
-                const dx = t.x - s.x, dy = t.y - s.y;
-                const len = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-                let mx, my;
-                if (count <= 1) { mx = (s.x + t.x) / 2; my = (s.y + t.y) / 2; }
-                else {
-                    const offset = (idx - (count - 1) / 2) * 30;
-                    mx = (s.x + t.x) / 2 - dy * offset / len * 0.5;
-                    my = (s.y + t.y) / 2 + dx * offset / len * 0.5;
-                }
-                const g = d3.select(this);
-                const txt = g.select("text");
-                txt.attr("x", mx).attr("y", my);
-                const bbox = txt.node().getBBox();
-                g.select("rect")
-                    .attr("x", bbox.x - 3).attr("y", bbox.y - 1)
-                    .attr("width", bbox.width + 6).attr("height", bbox.height + 2)
-                    .attr("rx", 3);
-            });
+            updateLabelPositions();
             nodeG.attr("transform", d => `translate(${d.x},${d.y})`);
             label.attr("x", d => d.x).attr("y", d => d.y);
         });
 }
 
+// Drag handlers — nodes stay pinned where dragged for free positioning
 function dragStart(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
 function dragging(e, d) { d.fx = e.x; d.fy = e.y; }
-function dragEnd(e, d) { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+function dragEnd(e, d) { if (!e.active) simulation.alphaTarget(0); /* keep d.fx/d.fy so node stays pinned */ }
 
 // ── Tooltip ──────────────────────────────────────────────────────────
 function showTooltip(event, d) {
@@ -498,8 +600,14 @@ function populatePathfinderDropdowns() {
     const targetSel = document.getElementById("path-target");
     startSel.innerHTML = '<option value="">— Select source —</option>';
     targetSel.innerHTML = '<option value="">— Select target —</option>';
-    graphData.nodes.forEach(n => {
-        const opt1 = document.createElement("option"); opt1.value = n.id; opt1.textContent = `${n.name} (${n.type})`;
+    // Sort nodes alphabetically by name
+    const sorted = [...graphData.nodes].sort((a, b) => a.name.localeCompare(b.name));
+    sorted.forEach(n => {
+        const isCompromised = compromisedNodes.has(n.id);
+        const opt1 = document.createElement("option");
+        opt1.value = n.id;
+        opt1.textContent = `${n.name} (${n.type})`;
+        if (isCompromised) { opt1.style.color = "#f0883e"; opt1.className = "compromised-option"; }
         const opt2 = opt1.cloneNode(true);
         startSel.appendChild(opt1);
         targetSel.appendChild(opt2);
@@ -615,9 +723,20 @@ function highlightPath(path, cardEl) {
     path.forEach(step => {
         pathArns.add(step.from_arn);
         pathArns.add(step.to_arn);
-        gLinks.selectAll("path").each(function () {
+        gLinks.selectAll("path.link-line").each(function () {
             const el = d3.select(this);
-            if (el.attr("data-source") === step.from_arn && el.attr("data-target") === step.to_arn) {
+            if (el.attr("data-source") === step.from_arn &&
+                el.attr("data-target") === step.to_arn &&
+                el.attr("data-type") === step.relationship) {
+                el.classed("highlighted", true);
+            }
+        });
+        // Also highlight hitbox for visual consistency
+        gLinks.selectAll("path.link-hitbox").each(function () {
+            const el = d3.select(this);
+            if (el.attr("data-source") === step.from_arn &&
+                el.attr("data-target") === step.to_arn &&
+                el.attr("data-type") === step.relationship) {
                 el.classed("highlighted", true);
             }
         });
@@ -674,6 +793,7 @@ async function executePathStep(pathIdx, stepIdx) {
 
             computeEdgeStatuses();
             renderGraph();
+            populatePathfinderDropdowns();
         } else {
             if (rowEl) rowEl.classList.add("step-failed");
             if (btn) { btn.textContent = "✕"; btn.classList.add("step-error"); }
@@ -721,6 +841,8 @@ function openActionModal(edgeData) {
     currentModal = edgeData;
     const srcId = typeof edgeData.source === "object" ? edgeData.source.id : edgeData.source;
     const tgtId = typeof edgeData.target === "object" ? edgeData.target.id : edgeData.target;
+    const key = `${srcId}|${tgtId}|${edgeData.type}`;
+    const status = edgeStatus[key] || "blocked";
     document.getElementById("modal-source").textContent = srcId;
     document.getElementById("modal-target").textContent = tgtId;
     document.getElementById("modal-edge-type").textContent = edgeData.type;
@@ -728,6 +850,17 @@ function openActionModal(edgeData) {
     document.getElementById("modal-result-area").innerHTML = "";
     document.getElementById("btn-execute-action").disabled = false;
     document.getElementById("btn-execute-action").classList.remove("loading");
+    // Show/hide false positive button based on status
+    const fpBtn = document.getElementById("btn-false-positive");
+    if (status === "false_positive") {
+        fpBtn.textContent = "\u21a9\ufe0f Unmark False Positive";
+        fpBtn.style.display = "";
+    } else if (status === "blocked") {
+        fpBtn.style.display = "none";
+    } else {
+        fpBtn.textContent = "\ud83d\udeab Mark as False Positive";
+        fpBtn.style.display = "";
+    }
     document.getElementById("action-modal").classList.add("visible");
 }
 
@@ -769,6 +902,7 @@ async function executeAction() {
             }
             computeEdgeStatuses();
             renderGraph();
+            populatePathfinderDropdowns();
         } else {
             area.innerHTML = `<div class="modal-result error">${res.error}</div>`;
             showToast("Action failed.", "error");
@@ -833,4 +967,186 @@ async function deleteSnapshot(name) {
         showToast(`Snapshot "${name}" deleted.`, "info");
         refreshSnapshots();
     } catch (e) { showToast(e.message, "error"); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Mark False Positive ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+function markFalsePositive() {
+    if (!currentModal) return;
+    const srcId = typeof currentModal.source === "object" ? currentModal.source.id : currentModal.source;
+    const tgtId = typeof currentModal.target === "object" ? currentModal.target.id : currentModal.target;
+    const key = `${srcId}|${tgtId}|${currentModal.type}`;
+    if (edgeStatus[key] === "false_positive") {
+        // Unmark: revert to computed status
+        delete edgeStatus[key];
+        computeEdgeStatuses();
+        showToast(`Edge "${currentModal.type}" unmarked from false positive.`, "info");
+    } else {
+        edgeStatus[key] = "false_positive";
+        showToast(`Edge "${currentModal.type}" marked as false positive.`, "info");
+    }
+    renderGraph();
+    closeModal();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Clear Graph ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+async function clearGraph() {
+    graphData = { nodes: [], links: [] };
+    edgeStatus = {};
+    edgeManualOffset = {};
+    filterInitialized = false;
+    visibleNodeIds.clear();
+    visibleEdgeTypes.clear();
+    if (simulation) simulation.stop();
+    gLinks.selectAll("*").remove();
+    gLinkLabels.selectAll("*").remove();
+    gNodes.selectAll("*").remove();
+    gLabels.selectAll("*").remove();
+    document.getElementById("graph-empty").classList.remove("hidden");
+    document.getElementById("graph-legend").classList.add("hidden");
+    document.getElementById("filter-nodes-list").innerHTML = "";
+    document.getElementById("filter-edges-list").innerHTML = "";
+    clearPathfinder();
+    showToast("Graph cleared. Click 'Build Graph' to rebuild.", "info");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Filter Panel ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+function toggleFilterPanel() {
+    const panel = document.getElementById("filter-panel");
+    const isHidden = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden");
+    // Close panel when clicking outside
+    if (isHidden) {
+        setTimeout(() => {
+            function closeOnOutside(e) {
+                const wrapper = document.querySelector(".filter-wrapper");
+                if (!wrapper.contains(e.target)) {
+                    panel.classList.add("hidden");
+                    document.removeEventListener("click", closeOnOutside, true);
+                }
+            }
+            document.addEventListener("click", closeOnOutside, true);
+        }, 0);
+    }
+}
+
+function toggleFilterSection(listId) {
+    const section = document.getElementById(listId).parentElement;
+    section.classList.toggle("open");
+}
+
+function populateFilterCheckboxes() {
+    // Collect all unique edge types
+    const edgeTypes = new Set();
+    graphData.links.forEach(l => edgeTypes.add(l.type));
+
+    // Initialize visibility sets on first load (all visible)
+    if (!filterInitialized) {
+        visibleNodeIds = new Set(graphData.nodes.map(n => n.id));
+        visibleEdgeTypes = new Set(edgeTypes);
+        filterInitialized = true;
+    } else {
+        // Add any new nodes/types that appeared
+        graphData.nodes.forEach(n => visibleNodeIds.add(n.id));
+        edgeTypes.forEach(t => visibleEdgeTypes.add(t));
+    }
+
+    // Build node checkboxes — per individual node, sorted alphabetically
+    const nodeList = document.getElementById("filter-nodes-list");
+    nodeList.innerHTML = "";
+    const sortedNodes = [...graphData.nodes].sort((a, b) => a.name.localeCompare(b.name));
+
+    // Select All checkbox for nodes
+    const nodeSelectAllLbl = document.createElement("label");
+    nodeSelectAllLbl.style.cssText = "font-weight:600;border-bottom:1px solid var(--glass-border);padding-bottom:6px;margin-bottom:2px";
+    const nodeSelectAllCb = document.createElement("input");
+    nodeSelectAllCb.type = "checkbox";
+    nodeSelectAllCb.checked = sortedNodes.every(n => visibleNodeIds.has(n.id));
+    nodeSelectAllLbl.appendChild(nodeSelectAllCb);
+    nodeSelectAllLbl.appendChild(document.createTextNode(" Select All"));
+    nodeList.appendChild(nodeSelectAllLbl);
+
+    const nodeCbs = [];
+    sortedNodes.forEach(n => {
+        const lbl = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = visibleNodeIds.has(n.id);
+        cb.addEventListener("change", () => {
+            if (cb.checked) visibleNodeIds.add(n.id);
+            else visibleNodeIds.delete(n.id);
+            nodeSelectAllCb.checked = sortedNodes.every(nd => visibleNodeIds.has(nd.id));
+            renderGraph();
+        });
+        nodeCbs.push({ cb, node: n });
+        const dot = document.createElement("span");
+        dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${NODE_COLORS[n.type] || NODE_COLORS.UNKNOWN};flex-shrink:0`;
+        const txt = document.createElement("span");
+        txt.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+        txt.textContent = n.name;
+        txt.title = n.id;
+        lbl.appendChild(cb);
+        lbl.appendChild(dot);
+        lbl.appendChild(txt);
+        nodeList.appendChild(lbl);
+    });
+
+    nodeSelectAllCb.addEventListener("change", () => {
+        nodeCbs.forEach(({ cb, node }) => {
+            cb.checked = nodeSelectAllCb.checked;
+            if (nodeSelectAllCb.checked) visibleNodeIds.add(node.id);
+            else visibleNodeIds.delete(node.id);
+        });
+        renderGraph();
+    });
+
+    // Build edge checkboxes
+    const edgeList = document.getElementById("filter-edges-list");
+    edgeList.innerHTML = "";
+    const sortedEdgeTypes = [...edgeTypes].sort();
+
+    // Select All checkbox for edges
+    const edgeSelectAllLbl = document.createElement("label");
+    edgeSelectAllLbl.style.cssText = "font-weight:600;border-bottom:1px solid var(--glass-border);padding-bottom:6px;margin-bottom:2px";
+    const edgeSelectAllCb = document.createElement("input");
+    edgeSelectAllCb.type = "checkbox";
+    edgeSelectAllCb.checked = sortedEdgeTypes.every(t => visibleEdgeTypes.has(t));
+    edgeSelectAllLbl.appendChild(edgeSelectAllCb);
+    edgeSelectAllLbl.appendChild(document.createTextNode(" Select All"));
+    edgeList.appendChild(edgeSelectAllLbl);
+
+    const edgeCbs = [];
+    sortedEdgeTypes.forEach(t => {
+        const lbl = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = visibleEdgeTypes.has(t);
+        cb.addEventListener("change", () => {
+            if (cb.checked) visibleEdgeTypes.add(t);
+            else visibleEdgeTypes.delete(t);
+            edgeSelectAllCb.checked = sortedEdgeTypes.every(et => visibleEdgeTypes.has(et));
+            renderGraph();
+        });
+        edgeCbs.push({ cb, type: t });
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(" " + t));
+        edgeList.appendChild(lbl);
+    });
+
+    edgeSelectAllCb.addEventListener("change", () => {
+        edgeCbs.forEach(({ cb, type }) => {
+            cb.checked = edgeSelectAllCb.checked;
+            if (edgeSelectAllCb.checked) visibleEdgeTypes.add(type);
+            else visibleEdgeTypes.delete(type);
+        });
+        renderGraph();
+    });
 }

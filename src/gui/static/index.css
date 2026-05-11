@@ -711,10 +711,10 @@ select.form-input {
 .link-line.status-possible { stroke-opacity: 0.7; }
 .link-line.status-blocked  { stroke-opacity: 0.3; }
 
-/* Edge labels: hidden by default, shown on hover */
+/* Edge labels: always visible, interactive for dragging */
 .link-label-group {
-    pointer-events: none;
-    opacity: 0;
+    pointer-events: all;
+    opacity: 1;
     transition: opacity var(--transition-fast);
 }
 
@@ -733,16 +733,14 @@ select.form-input {
     dominant-baseline: central;
 }
 
-/* Show labels on edge hover — use sibling group matching via JS class */
-.links path.link-line:hover ~ .link-labels .link-label-group,
-.link-label-group:hover,
-.link-label-group.visible {
+.link-label-group:hover {
     opacity: 1;
 }
 
-/* Show all labels when hovering over the link-labels layer */
-#graph-root:hover .link-label-group {
-    opacity: 1;
+.link-label-group:hover .link-label-bg {
+    fill: var(--bg-tertiary);
+    stroke: var(--accent-cyan);
+    stroke-width: 1;
 }
 
 /* Path highlight animation */
@@ -1090,6 +1088,122 @@ select.form-input {
 @keyframes toast-slide-in {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
+}
+
+/* ── Filter Panel ───────────────────────────────────────────────── */
+.filter-wrapper {
+    position: relative;
+}
+
+.filter-panel {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 6px;
+    width: 240px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 300;
+    overflow: hidden;
+    animation: filter-slide-in 0.2s ease;
+}
+
+@keyframes filter-slide-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.filter-section {
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.filter-section:last-child {
+    border-bottom: none;
+}
+
+.filter-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.filter-section-header:hover {
+    background: var(--glass-bg);
+    color: var(--text-primary);
+}
+
+.filter-section-header .chevron {
+    font-size: 10px;
+    transition: transform var(--transition-normal);
+}
+
+.filter-section.open .filter-section-header .chevron {
+    transform: rotate(90deg);
+}
+
+.filter-checklist {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height var(--transition-slow);
+}
+
+.filter-section.open .filter-checklist {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.filter-checklist label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.filter-checklist label:hover {
+    background: var(--glass-bg);
+    color: var(--text-primary);
+}
+
+.filter-checklist input[type="checkbox"] {
+    accent-color: var(--accent-blue);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+/* ── False Positive Edge Style ─────────────────────────────────── */
+.link-line.status-false_positive {
+    stroke-opacity: 0.4;
+}
+
+/* ── Warning Button ────────────────────────────────────────────── */
+.btn-warning {
+    background: var(--accent-orange);
+    color: #fff;
+}
+
+.btn-warning:hover {
+    background: #f9a03f;
+    box-shadow: 0 0 12px rgba(240, 136, 62, 0.3);
+}
+
+/* ── Compromised option text in dropdowns ──────────────────────── */
+option.compromised-option {
+    color: #f0883e;
 }
 
 /* ── Utility ────────────────────────────────────────────────────── */

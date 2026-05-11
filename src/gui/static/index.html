@@ -20,6 +20,22 @@
             </div>
             <div class="header-right">
                 <div id="pipeline-stage" class="pipeline-indicator" data-stage="idle">Idle</div>
+                <!-- Filter Toggle -->
+                <div class="filter-wrapper">
+                    <button id="btn-filter-toggle" class="btn btn-ghost btn-sm" onclick="toggleFilterPanel()" title="Filter nodes & edges">
+                        🔍 Filters
+                    </button>
+                    <div id="filter-panel" class="filter-panel hidden">
+                        <div class="filter-section">
+                            <div class="filter-section-header" onclick="toggleFilterSection('filter-nodes-list')">Nodes <span class="chevron">▶</span></div>
+                            <div id="filter-nodes-list" class="filter-checklist"></div>
+                        </div>
+                        <div class="filter-section">
+                            <div class="filter-section-header" onclick="toggleFilterSection('filter-edges-list')">Edges <span class="chevron">▶</span></div>
+                            <div id="filter-edges-list" class="filter-checklist"></div>
+                        </div>
+                    </div>
+                </div>
                 <div id="profile-badge" class="profile-badge">
                     <span class="dot"></span>
                     <span id="profile-badge-text">No Profile</span>
@@ -94,6 +110,9 @@
                             <button id="btn-run-all" class="btn btn-success btn-block" onclick="runAll()">
                                 <span class="spinner"></span>
                                 🚀 Run All
+                            </button>
+                            <button id="btn-clear-graph" class="btn btn-ghost btn-block" onclick="clearGraph()" style="margin-top:4px;color:var(--accent-red)">
+                                🗑️ Clear Graph
                             </button>
                         </div>
                     </div>
@@ -208,6 +227,12 @@
                     </svg>
                     <span>Blocked</span>
                 </div>
+                <div class="legend-item">
+                    <svg width="24" height="10">
+                        <line x1="0" y1="5" x2="24" y2="5" stroke="#f85149" stroke-width="1.5" stroke-dasharray="6,4" />
+                    </svg>
+                    <span>False Positive</span>
+                </div>
             </div>
         </main>
 
@@ -257,6 +282,9 @@
             <div id="modal-result-area"></div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                <button id="btn-false-positive" class="btn btn-warning" onclick="markFalsePositive()">
+                    🚫 Mark as False Positive
+                </button>
                 <button id="btn-execute-action" class="btn btn-danger" onclick="executeAction()">
                     <span class="spinner"></span>
                     Execute Action
