@@ -1,10 +1,14 @@
 import os
 import json
 import time
+import base64
 import logging
 import boto3
 from typing import Dict, Any, Optional, List
 from enum import Enum
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 
 from src.discovery.extractor import Extractor
 from src.graph.builder import GraphBuilder
@@ -54,6 +58,7 @@ class Orchestrator:
             "secret_access_key": secret_access_key,
             "session_token": session_token,
             "region": region,
+            "identity": None,  # populated on activation
         }
         logger.info(f"Credential profile '{name}' added.")
 
@@ -79,25 +84,31 @@ class Orchestrator:
             sts = session.client("sts")
             identity = sts.get_caller_identity()
             self._active_profile = name
-            logger.info(f"Profile '{name}' activated. Caller: {identity['Arn']}")
-            return {
+            identity_info = {
                 "arn": identity["Arn"],
                 "account": identity["Account"],
                 "user_id": identity["UserId"],
             }
+            # Persist identity info on the credential for display
+            self._credentials[name]["identity"] = identity_info
+            logger.info(f"Profile '{name}' activated. Caller: {identity['Arn']}")
+            return identity_info
         except Exception as e:
             logger.error(f"Failed to activate profile '{name}': {e}")
             raise
 
     def list_credentials(self) -> List[Dict[str, Any]]:
-        """Returns profile list with names and regions (never secrets)."""
+        """Returns profile list with names, regions, and identity info (never secrets)."""
         result = []
         for name, cred in self._credentials.items():
-            result.append({
+            entry = {
                 "name": name,
                 "region": cred["region"],
                 "is_active": name == self._active_profile,
-            })
+            }
+            if cred.get("identity"):
+                entry["identity"] = cred["identity"]
+            result.append(entry)
         return result
 
     def get_active_profile(self) -> Optional[Dict[str, Any]]:
@@ -474,35 +485,90 @@ class Orchestrator:
             logger.error(f"Action execution failed: {e}")
             return {"success": False, "error": str(e)}
 
-    # ── Graph Snapshots ────────────────────────────────────────────────
+    # ── Graph Snapshots (AES-encrypted) ─────────────────────────────────
 
-    def save_graph(self, name: str) -> Dict[str, Any]:
-        """Export current Neo4j graph to a JSON snapshot file."""
+    @staticmethod
+    def _derive_key(password: str, salt: bytes) -> bytes:
+        """Derive a Fernet-compatible key from a password using PBKDF2."""
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=480_000)
+        return base64.urlsafe_b64encode(kdf.derive(password.encode()))
+
+    def save_graph(self, name: str, password: str,
+                   client_state: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Export current Neo4j graph + full session state to an encrypted snapshot."""
         self._ensure_builder()
-        data = self.get_graph_data()
-        data["metadata"] = {
+        graph = self.get_graph_data()
+
+        # Build the full state payload
+        cs = client_state or {}
+        payload = {
+            "nodes": graph["nodes"],
+            "links": graph["links"],
+            "compromised_nodes": cs.get("compromisedNodes", []),
+            "edge_status": cs.get("edgeStatus", {}),
+            "edge_manual_offset": cs.get("edgeManualOffset", {}),
+            "initial_compromised_arn": cs.get("initialCompromisedArn", None),
+            "credentials": {
+                name: {
+                    "access_key_id": c["access_key_id"],
+                    "secret_access_key": c["secret_access_key"],
+                    "session_token": c["session_token"],
+                    "region": c["region"],
+                    "identity": c.get("identity"),
+                } for name, c in self._credentials.items()
+            },
+            "active_profile": self._active_profile,
+        }
+
+        # Metadata header (unencrypted, for listing)
+        metadata = {
             "name": name,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "profile": self._active_profile,
+            "node_count": len(graph["nodes"]),
+            "link_count": len(graph["links"]),
+        }
+
+        # Encrypt payload
+        salt = os.urandom(16)
+        key = self._derive_key(password, salt)
+        fernet = Fernet(key)
+        encrypted = fernet.encrypt(json.dumps(payload).encode())
+
+        envelope = {
+            "metadata": metadata,
+            "salt": base64.b64encode(salt).decode(),
+            "encrypted": encrypted.decode(),
         }
 
         filepath = os.path.join(self.snapshot_dir, f"{name}.json")
         with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
-        logger.info(f"Graph snapshot saved: {filepath}")
-        return {"name": name, "path": filepath, "nodes": len(data["nodes"]), "links": len(data["links"])}
+            json.dump(envelope, f)
+        logger.info(f"Encrypted snapshot saved: {filepath}")
+        return {"name": name, "nodes": len(graph["nodes"]), "links": len(graph["links"])}
 
-    def load_graph(self, name: str, mode: str = "build") -> Dict[str, Any]:
-        """Load a graph snapshot back into Neo4j."""
+    def load_graph(self, name: str, password: str, mode: str = "build") -> Dict[str, Any]:
+        """Load an encrypted snapshot, restore graph into Neo4j and return full state."""
         filepath = os.path.join(self.snapshot_dir, f"{name}.json")
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Snapshot '{name}' not found.")
 
         with open(filepath, "r") as f:
-            data = json.load(f)
+            envelope = json.load(f)
 
+        # Decrypt
+        salt = base64.b64decode(envelope["salt"])
+        key = self._derive_key(password, salt)
+        fernet = Fernet(key)
+        try:
+            decrypted = fernet.decrypt(envelope["encrypted"].encode())
+        except InvalidToken:
+            raise ValueError("Incorrect password.")
+
+        data = json.loads(decrypted)
+
+        # Restore graph into Neo4j
         self._ensure_builder()
-
         if mode == "build":
             self._builder.clear_graph()
 
@@ -513,7 +579,6 @@ class Orchestrator:
                     f"MERGE (n:{label} {{arn: $arn}}) SET n.name = $name",
                     arn=node["id"], name=node["name"],
                 )
-
             for link in data.get("links", []):
                 rel_type = link.get("type", "CONNECTED")
                 session.run(
@@ -521,11 +586,29 @@ class Orchestrator:
                     src=link["source"], tgt=link["target"],
                 )
 
-        logger.info(f"Snapshot '{name}' loaded ({mode} mode).")
-        return self._get_graph_stats()
+        # Restore credentials into this session's orchestrator
+        stored_creds = data.get("credentials", {})
+        for cname, cdata in stored_creds.items():
+            self._credentials[cname] = cdata
+        if data.get("active_profile") and data["active_profile"] in self._credentials:
+            self._active_profile = data["active_profile"]
+
+        logger.info(f"Encrypted snapshot '{name}' loaded ({mode} mode).")
+
+        # Return full state for frontend restoration
+        return {
+            **self._get_graph_stats(),
+            "state": {
+                "compromisedNodes": data.get("compromised_nodes", []),
+                "edgeStatus": data.get("edge_status", {}),
+                "edgeManualOffset": data.get("edge_manual_offset", {}),
+                "initialCompromisedArn": data.get("initial_compromised_arn"),
+                "activeProfile": data.get("active_profile"),
+            },
+        }
 
     def list_snapshots(self) -> List[Dict[str, Any]]:
-        """List all saved graph snapshots."""
+        """List all saved graph snapshots (reads only unencrypted metadata)."""
         snapshots = []
         for filename in os.listdir(self.snapshot_dir):
             if filename.endswith(".json"):
@@ -538,8 +621,8 @@ class Orchestrator:
                         "name": meta.get("name", filename.replace(".json", "")),
                         "timestamp": meta.get("timestamp", ""),
                         "profile": meta.get("profile", ""),
-                        "nodes": len(data.get("nodes", [])),
-                        "links": len(data.get("links", [])),
+                        "nodes": meta.get("node_count", 0),
+                        "links": meta.get("link_count", 0),
                     })
                 except Exception:
                     snapshots.append({"name": filename.replace(".json", ""), "error": "corrupt"})

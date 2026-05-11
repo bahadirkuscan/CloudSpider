@@ -1218,3 +1218,20 @@ option.compromised-option {
 .justify-between { justify-content: space-between; }
 .flex-1 { flex: 1; }
 .hidden { display: none !important; }
+
+/* Credential identity details */
+.cred-identity {
+    margin-top: 4px;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+.cred-identity div {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

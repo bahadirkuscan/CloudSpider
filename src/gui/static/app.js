@@ -43,12 +43,27 @@ let filterInitialized = false;
 // Tracks the initial compromised ARN from active profile activation
 let initialCompromisedArn = null;
 
-// ── Init ─────────────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
+// ── Init ─────────────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", async () => {
     initGraph();
     initSocketIO();
     refreshCredentials();
     refreshSnapshots();
+    // Restore session state and graph on page refresh
+    const hadState = await restoreSessionState();
+    if (hadState) {
+        try {
+            const gd = await api("/api/graph");
+            if (gd.nodes && gd.nodes.length) {
+                graphData = gd;
+                if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
+                computeEdgeStatuses();
+                populateFilterCheckboxes();
+                renderGraph();
+                populatePathfinderDropdowns();
+            }
+        } catch (_) { /* no graph yet */ }
+    }
 });
 
 // ── SocketIO ─────────────────────────────────────────────────────────
@@ -112,12 +127,38 @@ function setLoading(btnId, loading) {
 
 // ── API Helper ───────────────────────────────────────────────────────
 async function api(url, method = "GET", body = null) {
-    const opts = { method, headers: { "Content-Type": "application/json" } };
+    const opts = { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin" };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(url, opts);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Request failed");
     return data;
+}
+
+// ── Session State Persistence ────────────────────────────────────────
+async function persistSessionState() {
+    try {
+        await api("/api/session/state", "POST", {
+            compromisedNodes: [...compromisedNodes],
+            edgeStatus: { ...edgeStatus },
+            edgeManualOffset: { ...edgeManualOffset },
+            initialCompromisedArn,
+        });
+    } catch (_) { /* best-effort */ }
+}
+
+async function restoreSessionState() {
+    try {
+        const res = await api("/api/session/state");
+        if (res.has_state) {
+            compromisedNodes = new Set(res.compromisedNodes || []);
+            edgeStatus = res.edgeStatus || {};
+            edgeManualOffset = res.edgeManualOffset || {};
+            initialCompromisedArn = res.initialCompromisedArn || null;
+            return true;
+        }
+    } catch (_) { /* no state */ }
+    return false;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -152,10 +193,18 @@ async function refreshCredentials() {
         creds.forEach(c => {
             const div = document.createElement("div");
             div.className = `cred-item ${c.is_active ? "active" : ""}`;
+            let identityHtml = "";
+            if (c.identity) {
+                identityHtml = `<div class="cred-identity">
+                    <div title="${c.identity.arn}">ARN: ${c.identity.arn.split(':').pop()}</div>
+                    <div>Account: ${c.identity.account}</div>
+                </div>`;
+            }
             div.innerHTML = `
                 <div class="cred-item-info">
                     <div class="cred-item-name">${c.name}</div>
                     <div class="cred-item-region">${c.region}</div>
+                    ${identityHtml}
                 </div>
                 <div class="cred-item-actions">
                     ${c.is_active ? '<span style="color:var(--accent-green);font-size:12px">● Active</span>' :
@@ -181,6 +230,7 @@ async function activateProfile(name) {
         compromisedNodes.add(res.identity.arn);
         if (graphData.nodes.length) { computeEdgeStatuses(); renderGraph(); }
         refreshCredentials();
+        persistSessionState();
     } catch (e) { showToast(e.message, "error"); }
 }
 
@@ -278,6 +328,7 @@ async function loadGraphData() {
         populateFilterCheckboxes();
         renderGraph();
         populatePathfinderDropdowns();
+        persistSessionState();
     } catch (e) { showToast("Failed to load graph: " + e.message, "error"); }
 }
 
@@ -903,6 +954,7 @@ async function executeAction() {
             computeEdgeStatuses();
             renderGraph();
             populatePathfinderDropdowns();
+            persistSessionState();
         } else {
             area.innerHTML = `<div class="modal-result error">${res.error}</div>`;
             showToast("Action failed.", "error");
@@ -920,9 +972,17 @@ async function executeAction() {
 async function saveSnapshot() {
     const name = document.getElementById("snap-name").value.trim();
     if (!name) return showToast("Enter a snapshot name.", "error");
+    const password = prompt("Enter a password to encrypt this snapshot:");
+    if (!password) return showToast("Password is required to save a snapshot.", "error");
     setLoading("btn-save-snap", true);
     try {
-        const res = await api("/api/snapshots/save", "POST", { name });
+        const clientState = {
+            compromisedNodes: [...compromisedNodes],
+            edgeStatus: { ...edgeStatus },
+            edgeManualOffset: { ...edgeManualOffset },
+            initialCompromisedArn,
+        };
+        const res = await api("/api/snapshots/save", "POST", { name, password, state: clientState });
         showToast(`Snapshot "${name}" saved (${res.nodes} nodes, ${res.links} links).`, "success");
         document.getElementById("snap-name").value = "";
         refreshSnapshots();
@@ -954,16 +1014,28 @@ async function refreshSnapshots() {
 }
 
 async function loadSnapshot(name) {
+    const password = prompt(`Enter the password for snapshot "${name}":`);
+    if (!password) return showToast("Password is required to load a snapshot.", "error");
     try {
-        await api("/api/snapshots/load", "POST", { name, mode: currentMode });
+        const res = await api("/api/snapshots/load", "POST", { name, password, mode: currentMode });
+        // Restore frontend state from snapshot
+        if (res.state) {
+            compromisedNodes = new Set(res.state.compromisedNodes || []);
+            edgeStatus = res.state.edgeStatus || {};
+            edgeManualOffset = res.state.edgeManualOffset || {};
+            initialCompromisedArn = res.state.initialCompromisedArn || null;
+        }
         showToast(`Snapshot "${name}" loaded.`, "success");
         await loadGraphData();
+        refreshCredentials();
     } catch (e) { showToast(e.message, "error"); }
 }
 
 async function deleteSnapshot(name) {
+    const password = prompt(`Enter the password for snapshot "${name}" to delete it:`);
+    if (!password) return showToast("Password is required to delete a snapshot.", "error");
     try {
-        await api(`/api/snapshots/${name}`, "DELETE");
+        await api(`/api/snapshots/${name}`, "DELETE", { password });
         showToast(`Snapshot "${name}" deleted.`, "info");
         refreshSnapshots();
     } catch (e) { showToast(e.message, "error"); }
@@ -988,6 +1060,7 @@ function markFalsePositive() {
         showToast(`Edge "${currentModal.type}" marked as false positive.`, "info");
     }
     renderGraph();
+    persistSessionState();
     closeModal();
 }
 
