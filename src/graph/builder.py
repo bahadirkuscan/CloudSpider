@@ -1,9 +1,10 @@
 
 import time
 import logging
-from typing import List, Union
+from typing import List, Union, Dict
 from neo4j import GraphDatabase
 import subprocess
+import fnmatch
 
 from src.models.common import Identity, Resource, NodeType
 from src.evaluator.engine import PolicyEvaluator
@@ -109,14 +110,121 @@ class GraphBuilder:
             """
             session.run(query, source_arn=source_arn, target_arn=target_arn)
 
+    def _check_trust_policy_allows(self, identity: Identity, role: Identity) -> bool:
+        """
+        Check if a role's trust policy (AssumeRolePolicyDocument) allows the
+        given identity to assume it.
+
+        AWS AssumeRole requires BOTH:
+          1. The caller's identity policy allows sts:AssumeRole on the role ARN
+          2. The role's trust policy lists the caller (or its account root) as a
+             trusted principal
+
+        This method checks condition (2).
+        Returns True if the trust policy allows the identity.
+        """
+        trust_doc = role.metadata.get("AssumeRolePolicyDocument", {})
+        if not trust_doc:
+            return False
+
+        statements = trust_doc.get("Statement", [])
+        if not isinstance(statements, list):
+            statements = [statements]
+
+        account_id = self._extract_account_id(identity.id)
+
+        for stmt in statements:
+            if stmt.get("Effect") != "Allow":
+                continue
+
+            # Check Action — must include sts:AssumeRole
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            assume_action_match = any(
+                fnmatch.fnmatch("sts:AssumeRole".lower(), a.lower())
+                for a in actions
+            )
+            if not assume_action_match:
+                continue
+
+            # Check Principal
+            principal = stmt.get("Principal", {})
+            if principal == "*":
+                return True
+
+            if isinstance(principal, dict):
+                aws_principals = principal.get("AWS", [])
+                if isinstance(aws_principals, str):
+                    aws_principals = [aws_principals]
+
+                for p in aws_principals:
+                    # Exact ARN match
+                    if p == identity.id:
+                        return True
+                    # Wildcard
+                    if p == "*":
+                        return True
+                    # Account root principal (arn:aws:iam::ACCOUNT:root)
+                    # allows any IAM identity in that account
+                    if account_id and p == f"arn:aws:iam::{account_id}:root":
+                        return True
+
+                # Service principals do NOT match IAM identities
+                # (e.g. {"Service": "lambda.amazonaws.com"} should NOT match a user/role)
+                # If only Service principal exists, this statement doesn't apply
+
+        return False
+
+    def _extract_account_id(self, arn: str) -> str:
+        """Extract the AWS account ID from an ARN string."""
+        # ARN format: arn:aws:iam::ACCOUNT_ID:...
+        # or:         arn:aws:SERVICE:REGION:ACCOUNT_ID:...
+        parts = arn.split(":")
+        if len(parts) >= 5:
+            return parts[4]
+        return ""
+
     def build_edges(self, identities: List[Identity], resources: List[Resource]):
         """
         Evaluate and build edges strictly restricted to core services: 
         S3, EC2, Lambda, RDS, IAM.
         """
         all_assets = identities + resources
-        
+
+        # Build lookup maps for efficient access
+        identity_map: Dict[str, Identity] = {i.id: i for i in identities}
+        resource_map: Dict[str, Resource] = {r.id: r for r in resources}
+        group_arn_map: Dict[str, str] = {}  # group_name -> group_arn
+        for i in identities:
+            if i.type == NodeType.GROUP:
+                group_arn_map[i.name] = i.id
+
+        # ── MEMBER_OF edges: User → Group ──
         for identity in identities:
+            if identity.type == NodeType.USER:
+                user_groups = identity.metadata.get('_group_names', [])
+                for gname in user_groups:
+                    group_arn = group_arn_map.get(gname)
+                    if group_arn:
+                        self._create_edge(identity.id, group_arn, "MEMBER_OF")
+                        logger.info(f"Edge: {identity.name} --[MEMBER_OF]--> {gname}")
+
+        # ── USES_ROLE edges: Lambda → Execution Role ──
+        for resource in resources:
+            if resource.type == NodeType.COMPUTE and "lambda" in resource.id.lower():
+                exec_role_arn = resource.metadata.get("Role", "")
+                if exec_role_arn and exec_role_arn in identity_map:
+                    self._create_edge(resource.id, exec_role_arn, "USES_ROLE")
+                    logger.info(f"Edge: {resource.name} --[USES_ROLE]--> {identity_map[exec_role_arn].name}")
+
+        # ── Permission-based edges ──
+        for identity in identities:
+            # Skip groups — groups don't directly perform actions;
+            # their policies are inherited by member users
+            if identity.type == NodeType.GROUP:
+                continue
+
             evaluator = PolicyEvaluator(identity)
             
             for target in all_assets:
@@ -130,12 +238,16 @@ class GraphBuilder:
                     # AssumeRole
                     if target_type == NodeType.ROLE:
                         if evaluator.is_allowed("sts:AssumeRole", target):
-                            self._create_edge(identity.id, target.id, "ASSUME_ROLE")
+                            # Also check the role's trust policy
+                            if self._check_trust_policy_allows(identity, target):
+                                self._create_edge(identity.id, target.id, "ASSUME_ROLE")
+                                logger.info(f"Edge: {identity.name} --[ASSUME_ROLE]--> {target.name}")
                             
                     # PassRole
                     if target_type == NodeType.ROLE:
                         if evaluator.is_allowed("iam:PassRole", target):
                             self._create_edge(identity.id, target.id, "PASS_ROLE")
+                            logger.info(f"Edge: {identity.name} --[PASS_ROLE]--> {target.name}")
 
                     # PutUserPolicy / CreateAccessKey (Target must be user)
                     if target_type == NodeType.USER:
@@ -157,13 +269,48 @@ class GraphBuilder:
                     if is_lambda:
                         if evaluator.is_allowed("lambda:UpdateFunctionCode", target) or \
                            evaluator.is_allowed("lambda:CreateFunction", target):
-                            # Note: To fully execute PassRole escalate through Lambda, 
-                            # we verify PassRole in Pathfinder since it requires two hops, 
-                            # but we can log the action capability here.
                             self._create_edge(identity.id, target.id, "CanUpdateFunction")
+                            logger.info(f"Edge: {identity.name} --[CanUpdateFunction]--> {target.name}")
                             
                     # EC2
                     is_ec2 = "ec2" in target.id.lower() or "instance" in target.id.lower()
                     if is_ec2:
                         if evaluator.is_allowed("ec2:RunInstances", target):
                             self._create_edge(identity.id, target.id, "CanRunInstance")
+
+                # Storage Access (S3, RDS)
+                if target_type == NodeType.STORAGE:
+                    is_s3 = target.id.startswith("arn:aws:s3")
+                    is_rds = ":rds:" in target.id
+
+                    if is_s3:
+                        # Check read access (GetObject, ListBucket)
+                        can_read = (
+                            evaluator.is_allowed("s3:GetObject", target.id) or
+                            evaluator.is_allowed("s3:GetObject", target.id + "/*") or
+                            evaluator.is_allowed("s3:ListBucket", target)
+                        )
+                        # Check write access (PutObject, DeleteObject)
+                        can_write = (
+                            evaluator.is_allowed("s3:PutObject", target.id + "/*") or
+                            evaluator.is_allowed("s3:PutObject", target.id) or
+                            evaluator.is_allowed("s3:DeleteObject", target.id + "/*")
+                        )
+                        # Check full access (s3:*)
+                        can_full = evaluator.is_allowed("s3:*", target)
+
+                        if can_full or can_write:
+                            self._create_edge(identity.id, target.id, "HAS_ACCESS")
+                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 write/full)")
+                        elif can_read:
+                            self._create_edge(identity.id, target.id, "HAS_ACCESS")
+                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 read)")
+
+                    elif is_rds:
+                        can_access = (
+                            evaluator.is_allowed("rds:DescribeDBInstances", target) or
+                            evaluator.is_allowed("rds:*", target)
+                        )
+                        if can_access:
+                            self._create_edge(identity.id, target.id, "HAS_ACCESS")
+                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (RDS)")

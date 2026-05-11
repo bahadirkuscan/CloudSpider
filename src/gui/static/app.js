@@ -4,7 +4,7 @@
 let graphData = { nodes: [], links: [] };
 let simulation = null;
 let svg, gLinks, gNodes, gLabels, gLinkLabels;
-let currentMode = "scratch";
+let currentMode = "build";
 let currentModal = null;
 let logCount = 0;
 
@@ -27,9 +27,9 @@ const NODE_COLORS = {
 
 // Edge status styles: taken = green solid, possible = amber dashed, blocked = gray dotted
 const EDGE_STATUS_STYLES = {
-    taken:    { color: "#3fb950", dash: "",    width: 2.5 },
-    possible: { color: "#f0883e", dash: "8,4", width: 2   },
-    blocked:  { color: "#484f58", dash: "3,5", width: 1.5 }
+    taken: { color: "#3fb950", dash: "", width: 2.5 },
+    possible: { color: "#f0883e", dash: "8,4", width: 2 },
+    blocked: { color: "#484f58", dash: "3,5", width: 1.5 }
 };
 
 // ── Init ─────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ async function refreshCredentials() {
                 </div>
                 <div class="cred-item-actions">
                     ${c.is_active ? '<span style="color:var(--accent-green);font-size:12px">● Active</span>' :
-                      `<button class="btn btn-sm btn-ghost" onclick="activateProfile('${c.name}')">Activate</button>`}
+                    `<button class="btn btn-sm btn-ghost" onclick="activateProfile('${c.name}')">Activate</button>`}
                     <button class="btn btn-sm btn-ghost" onclick="deleteProfile('${c.name}')" style="color:var(--accent-red)">✕</button>
                 </div>`;
             list.appendChild(div);
@@ -414,14 +414,14 @@ function renderGraph() {
                 }
                 const dx = t.x - s.x, dy = t.y - s.y;
                 const offset = (idx - (count - 1) / 2) * 30;
-                const mx = (s.x + t.x) / 2 - dy * offset / Math.max(Math.sqrt(dx*dx+dy*dy), 1) * 0.5;
-                const my = (s.y + t.y) / 2 + dx * offset / Math.max(Math.sqrt(dx*dx+dy*dy), 1) * 0.5;
+                const mx = (s.x + t.x) / 2 - dy * offset / Math.max(Math.sqrt(dx * dx + dy * dy), 1) * 0.5;
+                const my = (s.y + t.y) / 2 + dx * offset / Math.max(Math.sqrt(dx * dx + dy * dy), 1) * 0.5;
                 return `M${s.x},${s.y}Q${mx},${my} ${t.x},${t.y}`;
             };
             link.attr("d", buildPath);
             linkHitbox.attr("d", buildPath);
             // Label positions at midpoint of curve
-            linkLabel.each(function(d) {
+            linkLabel.each(function (d) {
                 const s = typeof d.source === "object" ? d.source : { x: 0, y: 0 };
                 const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
                 const sId = typeof d.source === "object" ? d.source.id : d.source;
@@ -430,13 +430,13 @@ function renderGraph() {
                 const count = pairCount[pk] || 1;
                 const idx = pairIndex[edgeKey(d)] || 0;
                 const dx = t.x - s.x, dy = t.y - s.y;
-                const len = Math.max(Math.sqrt(dx*dx+dy*dy), 1);
+                const len = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
                 let mx, my;
-                if (count <= 1) { mx = (s.x+t.x)/2; my = (s.y+t.y)/2; }
+                if (count <= 1) { mx = (s.x + t.x) / 2; my = (s.y + t.y) / 2; }
                 else {
                     const offset = (idx - (count - 1) / 2) * 30;
-                    mx = (s.x+t.x)/2 - dy * offset / len * 0.5;
-                    my = (s.y+t.y)/2 + dx * offset / len * 0.5;
+                    mx = (s.x + t.x) / 2 - dy * offset / len * 0.5;
+                    my = (s.y + t.y) / 2 + dx * offset / len * 0.5;
                 }
                 const g = d3.select(this);
                 const txt = g.select("text");
@@ -471,7 +471,7 @@ function hideTooltip() { document.getElementById("node-tooltip").classList.remov
 // ── Highlight connected edges ────────────────────────────────────────
 function highlightConnected(d) {
     clearHighlights();
-    gLinks.selectAll("path").each(function() {
+    gLinks.selectAll("path").each(function () {
         const el = d3.select(this);
         if (el.attr("data-source") === d.id || el.attr("data-target") === d.id) {
             el.classed("highlighted", true);
@@ -615,14 +615,14 @@ function highlightPath(path, cardEl) {
     path.forEach(step => {
         pathArns.add(step.from_arn);
         pathArns.add(step.to_arn);
-        gLinks.selectAll("path").each(function() {
+        gLinks.selectAll("path").each(function () {
             const el = d3.select(this);
             if (el.attr("data-source") === step.from_arn && el.attr("data-target") === step.to_arn) {
                 el.classed("highlighted", true);
             }
         });
     });
-    gNodes.selectAll(".node-circle").each(function() {
+    gNodes.selectAll(".node-circle").each(function () {
         const el = d3.select(this);
         if (pathArns.has(el.attr("data-id"))) el.classed("highlighted", true);
     });
@@ -669,7 +669,7 @@ async function executePathStep(pathIdx, stepIdx) {
                     });
                     showToast(`Credentials saved as "${credName}".`, "info");
                     refreshCredentials();
-                } catch(_) {}
+                } catch (_) { }
             }
 
             computeEdgeStatuses();
@@ -765,7 +765,7 @@ async function executeAction() {
                     });
                     showToast(`Credentials auto-saved as "${credName}".`, "info");
                     refreshCredentials();
-                } catch(_) {}
+                } catch (_) { }
             }
             computeEdgeStatuses();
             renderGraph();

@@ -32,14 +32,14 @@ ALL_ADMIN_PATHS = """
 MATCH (n)
 WHERE (n)<-[:ASSUME_ROLE|AdministerResource|CreateAccessKey]-()
 WITH n
-MATCH p=(start)-[:ASSUME_ROLE|AdministerResource|CreateAccessKey|PASS_ROLE|CanUpdateFunction|CanRunInstance*1..10]->(n)
+MATCH p=(start)-[:ASSUME_ROLE|AdministerResource|CreateAccessKey|PASS_ROLE|CanUpdateFunction|CanRunInstance|MEMBER_OF|USES_ROLE|HAS_ACCESS*1..10]->(n)
 WHERE start <> n
 RETURN p, n
 """
 
 # Find escalation paths from a starting node to any node
 ALL_ESCALATION_PATHS_FROM_START = """
-MATCH p=(start {arn: $start_arn})-[:ASSUME_ROLE|AdministerResource|CreateAccessKey|PASS_ROLE|CanUpdateFunction|CanRunInstance*1..10]->(target)
+MATCH p=(start {arn: $start_arn})-[:ASSUME_ROLE|AdministerResource|CreateAccessKey|PASS_ROLE|CanUpdateFunction|CanRunInstance|MEMBER_OF|USES_ROLE|HAS_ACCESS*1..10]->(target)
 WHERE start <> target AND size(nodes(p)) > 1
 RETURN p
 """

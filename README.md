@@ -42,7 +42,7 @@ Applies graph traversal algorithms via Cypher queries onto the Neo4j database to
 ### 5. Interactive GUI
 A web-based single-page application served by Flask that provides a graphical interface to the entire pipeline.
 - **Credential Manager**: Configure and switch between multiple AWS IAM credential profiles. Credentials are stored in-memory only and never persisted to disk.
-- **Pipeline Controls**: Run Discovery, Build Graph (scratch or extend mode), or execute the full pipeline with a single click. Real-time log streaming via WebSocket shows live progress.
+- **Pipeline Controls**: Run Discovery, Build Graph (build or extend mode), or execute the full pipeline with a single click. Real-time log streaming via WebSocket shows live progress.
 - **Graph Visualization**: Interactive D3.js force-directed graph with color-coded nodes (Users, Roles, Compute, Storage) and styled edges by relationship type. Supports drag, zoom, pan, and click interactions.
 - **Pathfinder Query**: Select a start node and optionally a target to discover privilege escalation paths. Found paths are visually highlighted on the graph.
 - **Action Execution**: Click any graph edge to open an action modal and execute the corresponding real AWS API call (e.g., `sts:AssumeRole`, `iam:CreateAccessKey`) with a confirmation dialog.

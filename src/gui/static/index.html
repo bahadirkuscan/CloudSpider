@@ -77,8 +77,8 @@
                 <div class="sidebar-section-body">
                     <div class="section-content">
                         <div class="mode-toggle">
-                            <button class="mode-toggle-btn active" data-mode="scratch"
-                                onclick="setMode('scratch')">Scratch</button>
+                            <button class="mode-toggle-btn active" data-mode="build"
+                                onclick="setMode('build')">Build</button>
                             <button class="mode-toggle-btn" data-mode="extend"
                                 onclick="setMode('extend')">Extend</button>
                         </div>
@@ -164,7 +164,9 @@
                 <p>No graph data yet. Configure credentials and run the pipeline to visualize your AWS environment.</p>
             </div>
             <div id="graph-legend" class="hidden">
-                <div style="font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px">Nodes</div>
+                <div
+                    style="font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px">
+                    Nodes</div>
                 <div class="legend-item">
                     <div class="legend-dot" style="background:var(--accent-blue)"></div> User
                 </div>
@@ -181,19 +183,29 @@
                     <div class="legend-dot" style="background:var(--accent-yellow)"></div> Group
                 </div>
                 <div class="legend-item">
-                    <div class="legend-dot" style="background:transparent;border:2px dashed var(--accent-red);width:8px;height:8px"></div> Compromised
+                    <div class="legend-dot"
+                        style="background:transparent;border:2px dashed var(--accent-red);width:8px;height:8px"></div>
+                    Compromised
                 </div>
-                <div style="font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:8px 0 6px">Edges</div>
+                <div
+                    style="font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:8px 0 6px">
+                    Edges</div>
                 <div class="legend-item">
-                    <svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#3fb950" stroke-width="2.5"/></svg>
+                    <svg width="24" height="10">
+                        <line x1="0" y1="5" x2="24" y2="5" stroke="#3fb950" stroke-width="2.5" />
+                    </svg>
                     <span>Taken</span>
                 </div>
                 <div class="legend-item">
-                    <svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#f0883e" stroke-width="2" stroke-dasharray="8,4"/></svg>
+                    <svg width="24" height="10">
+                        <line x1="0" y1="5" x2="24" y2="5" stroke="#f0883e" stroke-width="2" stroke-dasharray="8,4" />
+                    </svg>
                     <span>Possible</span>
                 </div>
                 <div class="legend-item">
-                    <svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,5"/></svg>
+                    <svg width="24" height="10">
+                        <line x1="0" y1="5" x2="24" y2="5" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,5" />
+                    </svg>
                     <span>Blocked</span>
                 </div>
             </div>

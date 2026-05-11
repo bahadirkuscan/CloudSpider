@@ -155,7 +155,7 @@ class Orchestrator:
             logger.error(f"Discovery failed: {e}")
             raise
 
-    def build_graph(self, mode: str = "scratch") -> Dict[str, Any]:
+    def build_graph(self, mode: str = "build") -> Dict[str, Any]:
         """Build the Neo4j graph from discovered data."""
         if not self._identities and not self._resources:
             raise ValueError("No data to build graph from. Run discovery first.")
@@ -164,8 +164,8 @@ class Orchestrator:
         try:
             self._ensure_builder()
 
-            if mode == "scratch":
-                logger.info("Clearing existing graph (scratch mode)...")
+            if mode == "build":
+                logger.info("Clearing existing graph (build mode)...")
                 self._builder.clear_graph()
 
             logger.info("Adding nodes to graph...")
@@ -187,7 +187,7 @@ class Orchestrator:
             logger.error(f"Graph build failed: {e}")
             raise
 
-    def run_full_pipeline(self, mode: str = "scratch") -> Dict[str, Any]:
+    def run_full_pipeline(self, mode: str = "build") -> Dict[str, Any]:
         """Run discovery + graph build in one go."""
         discovery_result = self.run_discovery()
         build_result = self.build_graph(mode)
@@ -367,6 +367,106 @@ class Orchestrator:
                     },
                 }
 
+            elif edge_type == "USES_ROLE":
+                # USES_ROLE is a structural relationship: a Lambda function executes
+                # under this IAM role.  There is no API to "execute" — the edge
+                # tells the attacker that injecting code into the Lambda (via
+                # UpdateFunctionCode) will run with the target role's permissions.
+                lambda_name = source_arn.split(":")[-1] if ":function:" in source_arn else source_arn
+                role_name = target_arn.split("/")[-1] if "/" in target_arn else target_arn
+                return {
+                    "success": True,
+                    "action": "info:UsesRole",
+                    "result": {
+                        "message": f"Lambda function '{lambda_name}' executes as role '{role_name}'. "
+                                   f"Any code deployed to this function will run with that role's permissions. "
+                                   f"This is a structural relationship — no API call is needed.",
+                        "lambda_arn": source_arn,
+                        "execution_role_arn": target_arn,
+                    },
+                }
+
+            elif edge_type == "MEMBER_OF":
+                # MEMBER_OF is a structural relationship: the user belongs to
+                # an IAM group and inherits its policies.
+                username = source_arn.split("/")[-1] if "/" in source_arn else source_arn
+                group_name = target_arn.split("/")[-1] if "/" in target_arn else target_arn
+                return {
+                    "success": True,
+                    "action": "info:MemberOf",
+                    "result": {
+                        "message": f"User '{username}' is a member of group '{group_name}' and inherits "
+                                   f"all of the group's IAM policies. This is a structural relationship — "
+                                   f"no API call is needed.",
+                        "user_arn": source_arn,
+                        "group_arn": target_arn,
+                    },
+                }
+
+            elif edge_type == "HAS_ACCESS":
+                # HAS_ACCESS means the identity can read/write the target resource.
+                # We verify with a lightweight probe depending on resource type.
+                if target_arn.startswith("arn:aws:s3"):
+                    bucket_name = target_arn.split(":::")[-1] if ":::" in target_arn else target_arn
+                    try:
+                        s3 = session.client("s3")
+                        s3.list_objects_v2(Bucket=bucket_name, MaxKeys=1)
+                        return {
+                            "success": True,
+                            "action": "s3:ListObjectsV2",
+                            "result": {
+                                "message": f"Successfully listed objects in S3 bucket '{bucket_name}'. "
+                                           f"Access confirmed.",
+                                "bucket": bucket_name,
+                            },
+                        }
+                    except Exception as s3_err:
+                        return {
+                            "success": True,
+                            "action": "s3:HAS_ACCESS",
+                            "result": {
+                                "message": f"S3 access to '{bucket_name}' is authorized per policy evaluation, "
+                                           f"but the probe call returned: {s3_err}. "
+                                           f"This may be due to bucket conditions or the current session identity.",
+                                "bucket": bucket_name,
+                            },
+                        }
+                elif ":rds:" in target_arn:
+                    db_id = target_arn.split(":")[-1] if ":" in target_arn else target_arn
+                    try:
+                        rds = session.client("rds")
+                        resp = rds.describe_db_instances(DBInstanceIdentifier=db_id)
+                        db = resp["DBInstances"][0]
+                        return {
+                            "success": True,
+                            "action": "rds:DescribeDBInstances",
+                            "result": {
+                                "message": f"Successfully described RDS instance '{db_id}'. Access confirmed.",
+                                "endpoint": db.get("Endpoint", {}).get("Address", "N/A"),
+                                "engine": db.get("Engine", "N/A"),
+                                "status": db.get("DBInstanceStatus", "N/A"),
+                            },
+                        }
+                    except Exception as rds_err:
+                        return {
+                            "success": True,
+                            "action": "rds:HAS_ACCESS",
+                            "result": {
+                                "message": f"RDS access to '{db_id}' is authorized per policy evaluation, "
+                                           f"but the probe call returned: {rds_err}.",
+                                "db_identifier": db_id,
+                            },
+                        }
+                else:
+                    return {
+                        "success": True,
+                        "action": "info:HasAccess",
+                        "result": {
+                            "message": f"Access to resource '{target_arn}' is authorized per policy evaluation.",
+                            "resource_arn": target_arn,
+                        },
+                    }
+
             else:
                 return {"success": False, "error": f"Unknown edge type: {edge_type}"}
 
@@ -392,7 +492,7 @@ class Orchestrator:
         logger.info(f"Graph snapshot saved: {filepath}")
         return {"name": name, "path": filepath, "nodes": len(data["nodes"]), "links": len(data["links"])}
 
-    def load_graph(self, name: str, mode: str = "scratch") -> Dict[str, Any]:
+    def load_graph(self, name: str, mode: str = "build") -> Dict[str, Any]:
         """Load a graph snapshot back into Neo4j."""
         filepath = os.path.join(self.snapshot_dir, f"{name}.json")
         if not os.path.exists(filepath):
@@ -403,7 +503,7 @@ class Orchestrator:
 
         self._ensure_builder()
 
-        if mode == "scratch":
+        if mode == "build":
             self._builder.clear_graph()
 
         with self._builder.driver.session() as session:

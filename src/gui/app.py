@@ -102,7 +102,7 @@ def run_discovery():
 @app.route("/api/pipeline/build", methods=["POST"])
 def build_graph():
     data = request.json or {}
-    mode = data.get("mode", "scratch")
+    mode = data.get("mode", "build")
     try:
         result = orchestrator.build_graph(mode)
         socketio.emit("pipeline_status", {"stage": "graph_built", "message": "Graph build complete."})
@@ -114,7 +114,7 @@ def build_graph():
 @app.route("/api/pipeline/run-all", methods=["POST"])
 def run_full_pipeline():
     data = request.json or {}
-    mode = data.get("mode", "scratch")
+    mode = data.get("mode", "build")
     try:
         result = orchestrator.run_full_pipeline(mode)
         socketio.emit("pipeline_status", {"stage": "graph_built", "message": "Full pipeline complete."})
@@ -186,7 +186,7 @@ def save_snapshot():
 def load_snapshot():
     data = request.json or {}
     name = data.get("name")
-    mode = data.get("mode", "scratch")
+    mode = data.get("mode", "build")
     if not name:
         return jsonify({"error": "name is required."}), 400
     try:

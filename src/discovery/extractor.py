@@ -47,11 +47,69 @@ class Extractor:
             logger.error(f"Error fetching managed policy {policy_arn}: {e}")
             return {}
 
+    def _extract_group_policies(self, group_name: str) -> List[Dict[str, Any]]:
+        """Extract all policies (inline + managed) for a group."""
+        policies = []
+
+        # Inline policies
+        try:
+            inline_pags = self.iam_client.get_paginator('list_group_policies')
+            for p_page in inline_pags.paginate(GroupName=group_name):
+                for pol_name in p_page.get('PolicyNames', []):
+                    doc_resp = self.iam_client.get_group_policy(GroupName=group_name, PolicyName=pol_name)
+                    policies.append({
+                        "PolicyName": pol_name,
+                        "PolicyType": "Inline",
+                        "PolicyDocument": doc_resp['PolicyDocument']
+                    })
+        except Exception as e:
+            logger.error(f"Error fetching inline policies for group {group_name}: {e}")
+
+        # Managed policies
+        try:
+            attached_pags = self.iam_client.get_paginator('list_attached_group_policies')
+            for a_page in attached_pags.paginate(GroupName=group_name):
+                for attached in a_page.get('AttachedPolicies', []):
+                    doc = self._get_managed_policy_document(attached['PolicyArn'])
+                    policies.append({
+                        "PolicyName": attached['PolicyName'],
+                        "PolicyArn": attached['PolicyArn'],
+                        "PolicyType": "Managed",
+                        "PolicyDocument": doc
+                    })
+        except Exception as e:
+            logger.error(f"Error fetching attached policies for group {group_name}: {e}")
+
+        return policies
+
     def extract_identities(self) -> List[Identity]:
-        """Extract IAM Users and Roles."""
+        """Extract IAM Users, Roles, and Groups."""
         identities = []
-        
-        # 1. Extract Users
+
+        # ── 1. Extract Groups first so we can look them up for users ──
+        group_map = {}  # group_name -> Identity
+        group_policies_map = {}  # group_name -> list of policy dicts
+        try:
+            paginator = self.iam_client.get_paginator('list_groups')
+            for page in paginator.paginate():
+                for group in page['Groups']:
+                    group_name = group['GroupName']
+                    policies = self._extract_group_policies(group_name)
+                    group_policies_map[group_name] = policies
+
+                    group_identity = Identity(
+                        id=group['Arn'],
+                        name=group_name,
+                        type=NodeType.GROUP,
+                        metadata=group,
+                        policies=policies
+                    )
+                    group_map[group_name] = group_identity
+                    identities.append(group_identity)
+        except Exception as e:
+            logger.error(f"Error extracting IAM groups: {e}")
+
+        # ── 2. Extract Users ──
         try:
             paginator = self.iam_client.get_paginator('list_users')
             for page in paginator.paginate():
@@ -88,19 +146,37 @@ class Extractor:
                     except Exception as e:
                         logger.error(f"Error fetching attached policies for user {user_name}: {e}")
 
+                    # Collect group-inherited policies for this user
+                    inherited_group_policies = []
+                    user_group_names = []
+                    try:
+                        grp_pags = self.iam_client.get_paginator('list_groups_for_user')
+                        for g_page in grp_pags.paginate(UserName=user_name):
+                            for grp in g_page.get('Groups', []):
+                                gname = grp['GroupName']
+                                user_group_names.append(gname)
+                                inherited_group_policies.extend(group_policies_map.get(gname, []))
+                    except Exception as e:
+                        logger.error(f"Error fetching groups for user {user_name}: {e}")
+
+                    # Store group names in metadata for the graph builder to create MEMBER_OF edges
+                    user_metadata = dict(user)
+                    user_metadata['_group_names'] = user_group_names
+
                     identities.append(
                         Identity(
                             id=user['Arn'],
                             name=user_name,
                             type=NodeType.USER,
-                            metadata=user,
-                            policies=policies
+                            metadata=user_metadata,
+                            policies=policies,
+                            group_policies=inherited_group_policies
                         )
                     )
         except Exception as e:
             logger.error(f"Error extracting IAM users: {e}")
 
-        # 2. Extract Roles
+        # ── 3. Extract Roles ──
         try:
             paginator = self.iam_client.get_paginator('list_roles')
             for page in paginator.paginate():
