@@ -47,14 +47,14 @@ The `infra-deploy-role` (the role the user can assume) has an inline policy with
 **Flaw**: `aws:RequestedRegion` restricts regional API calls, but **IAM is a global service** — IAM API calls don't populate `aws:RequestedRegion`. Because CloudSpider's evaluator uses a fail-closed strategy for unknown context keys, this condition may be evaluated differently than AWS's actual behavior where the condition is simply not evaluated for global endpoints.
 
 ### Flaw 3: Trust Policy with Org Condition Gap
-The `super-admin-role` (the final target) has a trust policy gated by `aws:PrincipalOrgID`:
+The `super-admin-role` (the final target) has a trust policy gated by `aws:PrincipalAccount`:
 ```json
 {
   "Principal": "*",
   "Action": "sts:AssumeRole",
   "Condition": {
     "StringEquals": {
-      "aws:PrincipalOrgID": "o-exampleorgid"
+      "aws:PrincipalAccount": "YOUR_ACCOUNT_ID"
     }
   }
 }
@@ -81,7 +81,7 @@ restricted-dev (has Permissions Boundary)
         │                super-admin-role
         │               (AdministratorAccess)
         │                Trust: Principal=*
-        │                Condition: PrincipalOrgID
+        │                Condition: PrincipalAccount
         │                (satisfied by internal roles)
 ```
 
@@ -101,13 +101,13 @@ restricted-dev (has Permissions Boundary)
 |--------------|------------|---------|
 | Permissions Boundary | Blocks `iam:*` | Allows `sts:AssumeRole`, enabling boundary escape |
 | Region Condition | Restricts all actions to `us-east-1/us-west-2` | IAM is global; condition doesn't apply |
-| Org ID Trust Condition | Limits assumption to org members only | All internal principals satisfy this condition |
+| Account ID Trust Condition | Limits assumption to account members only | All internal principals satisfy this condition |
 
 ## Difficulty: Hard
 - Three independent defense layers that each appear correct
 - Requires understanding of:
   - How Permissions Boundaries interact with `sts:AssumeRole` (they don't restrict role chaining)
   - That `aws:RequestedRegion` is undefined for global IAM endpoints
-  - That `aws:PrincipalOrgID` is trivially satisfied by any in-account principal
+  - That `aws:PrincipalAccount` is trivially satisfied by any in-account principal
 - Even CloudSpider's evaluator may not fully detect this chain due to condition evaluation edge cases
 - This lab intentionally pushes beyond CloudSpider's current detection capabilities as a target for future improvement

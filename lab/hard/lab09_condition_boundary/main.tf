@@ -4,7 +4,7 @@
 # Vulnerability: Multiple layered defense mechanisms, each with a subtle flaw:
 #   1. Permissions Boundary allows sts:AssumeRole → boundary escape
 #   2. Region condition doesn't apply to global IAM calls
-#   3. Trust policy with Principal=* gated by PrincipalOrgID (trivially met)
+#   3. Trust policy with Principal=* gated by PrincipalAccount (trivially met)
 #
 # Scale: Large (10 users, 8 roles, 3 groups, 2 EC2, 1 Lambda, 2 S3)
 ###############################################################################
@@ -116,7 +116,10 @@ resource "aws_iam_policy" "dev_boundary" {
           "cloudwatch:GetMetricData",
           "cloudwatch:ListMetrics",
           "sts:AssumeRole",
-          "sts:GetCallerIdentity"
+          "sts:GetCallerIdentity",
+          "iam:List*",
+          "iam:Get*",
+          "rds:DescribeDBInstances"
         ]
         Resource = "*"
       },
@@ -210,7 +213,7 @@ resource "aws_iam_role" "super_admin_role" {
       Action    = "sts:AssumeRole"
       Condition = {
         StringEquals = {
-          "aws:PrincipalOrgID" = var.org_id
+          "aws:PrincipalAccount" = local.account_id
         }
       }
     }]
@@ -310,7 +313,7 @@ resource "aws_iam_role" "cost_optimizer_role" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "ce.amazonaws.com" }
+      Principal = { Service = "cost-optimization-hub.amazonaws.com" }
       Action    = "sts:AssumeRole"
     }]
   })
@@ -570,7 +573,7 @@ output "attack_chain" {
   value = [
     "Flaw 1: restricted-dev (boundary allows sts:AssumeRole) --[ASSUME_ROLE]--> infra-deploy-role (NO boundary)",
     "Flaw 2: infra-deploy-role has iam:*/sts:* — region condition doesn't apply to global IAM",
-    "Flaw 3: infra-deploy-role --[ASSUME_ROLE]--> super-admin-role (Principal=*, OrgID condition trivially met)",
+    "Flaw 3: infra-deploy-role --[ASSUME_ROLE]--> super-admin-role (Principal=*, AccountID condition trivially met)",
   ]
 }
 
@@ -578,7 +581,7 @@ output "defense_layers" {
   value = [
     "Layer 1: Permissions Boundary on restricted-dev (blocks iam:*, allows sts:AssumeRole)",
     "Layer 2: Region condition on infra-deploy-role (ineffective for IAM global calls)",
-    "Layer 3: OrgID condition on super-admin-role trust (met by all in-account principals)",
+    "Layer 3: PrincipalAccount condition on super-admin-role trust (met by all in-account principals)",
   ]
 }
 

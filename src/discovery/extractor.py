@@ -159,6 +159,22 @@ class Extractor:
                     except Exception as e:
                         logger.error(f"Error fetching groups for user {user_name}: {e}")
 
+                    # Extract permissions boundary
+                    permissions_boundary = None
+                    try:
+                        full_user = self.iam_client.get_user(UserName=user_name)['User']
+                        if 'PermissionsBoundary' in full_user:
+                            pb_arn = full_user['PermissionsBoundary'].get('PermissionsBoundaryArn')
+                            if pb_arn:
+                                pb_doc = self._get_managed_policy_document(pb_arn)
+                                permissions_boundary = {
+                                    "PolicyArn": pb_arn,
+                                    "PolicyType": "PermissionsBoundary",
+                                    "PolicyDocument": pb_doc
+                                }
+                    except Exception as e:
+                        logger.error(f"Error fetching permissions boundary for user {user_name}: {e}")
+
                     # Store group names in metadata for the graph builder to create MEMBER_OF edges
                     user_metadata = dict(user)
                     user_metadata['_group_names'] = user_group_names
@@ -170,7 +186,8 @@ class Extractor:
                             type=NodeType.USER,
                             metadata=user_metadata,
                             policies=policies,
-                            group_policies=inherited_group_policies
+                            group_policies=inherited_group_policies,
+                            permissions_boundary=permissions_boundary
                         )
                     )
         except Exception as e:
@@ -213,13 +230,30 @@ class Extractor:
                     except Exception as e:
                         logger.error(f"Error fetching attached policies for role {role_name}: {e}")
 
+                    # Extract permissions boundary
+                    permissions_boundary = None
+                    try:
+                        full_role = self.iam_client.get_role(RoleName=role_name)['Role']
+                        if 'PermissionsBoundary' in full_role:
+                            pb_arn = full_role['PermissionsBoundary'].get('PermissionsBoundaryArn')
+                            if pb_arn:
+                                pb_doc = self._get_managed_policy_document(pb_arn)
+                                permissions_boundary = {
+                                    "PolicyArn": pb_arn,
+                                    "PolicyType": "PermissionsBoundary",
+                                    "PolicyDocument": pb_doc
+                                }
+                    except Exception as e:
+                        logger.error(f"Error fetching permissions boundary for role {role_name}: {e}")
+
                     identities.append(
                         Identity(
                             id=role['Arn'],
                             name=role_name,
                             type=NodeType.ROLE,
                             metadata=role,
-                            policies=policies
+                            policies=policies,
+                            permissions_boundary=permissions_boundary
                         )
                     )
         except Exception as e:
