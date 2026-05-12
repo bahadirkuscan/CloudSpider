@@ -185,6 +185,32 @@ class GraphBuilder:
             return parts[4]
         return ""
 
+    def _extract_trust_services(self, role: Identity) -> list:
+        """
+        Extract service principals from a role's trust policy
+        (AssumeRolePolicyDocument).  Returns a list of service strings
+        such as ["ec2.amazonaws.com"].
+        """
+        trust_doc = role.metadata.get("AssumeRolePolicyDocument", {})
+        if not trust_doc:
+            return []
+
+        statements = trust_doc.get("Statement", [])
+        if not isinstance(statements, list):
+            statements = [statements]
+
+        services = []
+        for stmt in statements:
+            if stmt.get("Effect") != "Allow":
+                continue
+            principal = stmt.get("Principal", {})
+            if isinstance(principal, dict):
+                svc = principal.get("Service", [])
+                if isinstance(svc, str):
+                    svc = [svc]
+                services.extend(svc)
+        return services
+
     def build_edges(self, identities: List[Identity], resources: List[Resource]):
         """
         Evaluate and build edges strictly restricted to core services: 
@@ -245,7 +271,15 @@ class GraphBuilder:
                             
                     # PassRole
                     if target_type == NodeType.ROLE:
-                        if evaluator.is_allowed("iam:PassRole", target):
+                        # Build context with iam:PassedToService from the role's
+                        # trust policy so that condition-gated PassRole policies
+                        # (e.g. StringEquals iam:PassedToService = ec2.amazonaws.com)
+                        # evaluate correctly.
+                        passrole_ctx = {}
+                        trust_services = self._extract_trust_services(target)
+                        if trust_services:
+                            passrole_ctx["iam:PassedToService"] = trust_services if len(trust_services) > 1 else trust_services[0]
+                        if evaluator.is_allowed("iam:PassRole", target, context=passrole_ctx):
                             self._create_edge(identity.id, target.id, "PASS_ROLE")
                             logger.info(f"Edge: {identity.name} --[PASS_ROLE]--> {target.name}")
 
