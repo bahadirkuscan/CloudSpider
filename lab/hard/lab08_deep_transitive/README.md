@@ -23,8 +23,8 @@ Each hop is individually justifiable:
 ### Hop 1: `junior-analyst` → `analytics-support-group`
 The `junior-analyst` is a member of `analytics-support-group`, which has a group policy allowing `sts:AssumeRole` on `data-reader-role`. *Justification: analysts need read access to data sources.*
 
-### Hop 2: `data-reader-role` → `iam:PassRole` → `etl-execution-role`
-The `data-reader-role` has `iam:PassRole` permission scoped to `etl-execution-*` roles. *Justification: data readers trigger ETL jobs that require passing a role to Glue/Lambda.*
+### Hop 2: `data-reader-role` → `sts:AssumeRole` + `iam:PassRole` → `etl-execution-role`
+The `data-reader-role` can assume and pass the `etl-execution-*` roles. *Justification: data readers trigger ETL jobs directly and need to assume the ETL execution role.*
 
 ### Hop 3: `etl-execution-role` → `lambda:UpdateFunctionCode` → `etl-processor` Lambda
 The `etl-execution-role` can update Lambda function code. *Justification: ETL pipeline deploys updated transformation logic.*
@@ -45,7 +45,7 @@ junior-analyst
     │              [group policy: AssumeRole]
     │                       │
     ▼                       ▼
-data-reader-role ──[PASS_ROLE]──▶ etl-execution-role
+data-reader-role ──[ASSUME_ROLE + PASS_ROLE]──▶ etl-execution-role
                                         │
                                [CanUpdateFunction]
                                         │
@@ -69,7 +69,7 @@ data-reader-role ──[PASS_ROLE]──▶ etl-execution-role
 | Hop | Permission | Justification |
 |-----|-----------|---------------|
 | 1 | Group AssumeRole to `data-reader-role` | Analysts need data access |
-| 2 | `data-reader-role` PassRole to `etl-execution-*` | Data readers trigger ETL jobs |
+| 2 | `data-reader-role` AssumeRole + PassRole to `etl-execution-*` | Data readers run ETL pipelines |
 | 3 | `etl-execution-role` UpdateFunctionCode | ETL pipeline deployments |
 | 4 | Lambda exec role = `lambda-admin-exec-role` | ETL needs broad data access |
 | 5 | `lambda-admin-exec-role` AssumeRole to `infrastructure-admin-role` | Cross-system management |

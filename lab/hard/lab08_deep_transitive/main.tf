@@ -153,6 +153,12 @@ resource "aws_iam_role_policy" "data_reader_base" {
         Effect   = "Allow"
         Action   = "iam:PassRole"
         Resource = "arn:aws:iam::${local.account_id}:role/etl-execution-*"
+      },
+      {
+        Sid      = "AssumeETLRole"
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = "arn:aws:iam::${local.account_id}:role/etl-execution-*"
       }
     ]
   })

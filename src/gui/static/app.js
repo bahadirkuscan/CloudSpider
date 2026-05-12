@@ -837,9 +837,17 @@ async function executePathStep(pathIdx, stepIdx) {
                         secret_access_key: res.result.secret_access_key,
                         session_token: res.result.session_token || "",
                     });
-                    showToast(`Credentials saved as "${credName}".`, "info");
+                    // Auto-activate so subsequent chain steps use this identity
+                    await api(`/api/credentials/${credName}/activate`, "POST");
+                    showToast(`Credentials saved and activated as "${credName}".`, "info");
                     refreshCredentials();
                 } catch (_) { }
+
+                // For CanUpdateFunction, also mark the Lambda's execution role as compromised
+                // since we now hold its credentials
+                if (res.result.execution_role_arn) {
+                    compromisedNodes.add(res.result.execution_role_arn);
+                }
             }
 
             computeEdgeStatuses();
@@ -937,7 +945,7 @@ async function executeAction() {
             const key = `${srcId}|${tgtId}|${currentModal.type}`;
             edgeStatus[key] = "taken";
             compromisedNodes.add(tgtId);
-            // If we got new credentials, auto-register them
+            // If we got new credentials, auto-register and activate them
             if (res.result.access_key_id) {
                 const credName = `${currentModal.type}-${tgtId.split('/').pop() || tgtId.split(':').pop()}`;
                 try {
@@ -947,9 +955,14 @@ async function executeAction() {
                         secret_access_key: res.result.secret_access_key,
                         session_token: res.result.session_token || "",
                     });
-                    showToast(`Credentials auto-saved as "${credName}".`, "info");
+                    await api(`/api/credentials/${credName}/activate`, "POST");
+                    showToast(`Credentials auto-saved and activated as "${credName}".`, "info");
                     refreshCredentials();
                 } catch (_) { }
+
+                if (res.result.execution_role_arn) {
+                    compromisedNodes.add(res.result.execution_role_arn);
+                }
             }
             computeEdgeStatuses();
             renderGraph();
