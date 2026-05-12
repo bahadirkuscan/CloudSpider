@@ -56,7 +56,11 @@ The `support-agent` user has a policy with two interacting statements:
 {
   "Sid": "DenySensitiveResources",
   "Effect": "Deny",
-  "Action": "iam:*",
+  "Action": [
+    "iam:Create*", "iam:Delete*", "iam:Put*", "iam:Update*",
+    "iam:Attach*", "iam:Detach*", "iam:Add*", "iam:Remove*",
+    "iam:Set*", "iam:Change*", "iam:PassRole"
+  ],
   "NotResource": [
     "arn:aws:iam::ACCOUNT_ID:user/support-*",
     "arn:aws:iam::ACCOUNT_ID:role/readonly-*"
@@ -64,8 +68,8 @@ The `support-agent` user has a policy with two interacting statements:
 }
 ```
 
-**Intent**: "Deny IAM actions on everything except support users and readonly roles."  
-**Reality**: This denies IAM actions on resources that are NOT `support-*` users or `readonly-*` roles. But the `privileged-deploy-role` has a name that doesn't match `support-*` or `readonly-*`, so IAM actions on it ARE denied. However, `sts:AssumeRole` is NOT `iam:*` — it's `sts:AssumeRole`, which is not covered by this deny at all.
+**Intent**: "Deny mutating IAM actions on everything except support users and readonly roles."  
+**Reality**: This denies mutating IAM actions on resources that are NOT `support-*` users or `readonly-*` roles. But `sts:AssumeRole` is NOT an `iam:` action — it's in the `sts:` namespace, so this deny doesn't cover it at all.
 
 ### The Exploit
 `sts:AssumeRole` is allowed by Statement 1 (it's not `organizations:*` or `account:*`) and is **not** denied by Statement 2 (which only denies `iam:*`). The `privileged-deploy-role` trust policy allows account-wide assumption.

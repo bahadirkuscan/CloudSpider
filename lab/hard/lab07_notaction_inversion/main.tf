@@ -194,7 +194,7 @@ resource "aws_iam_role" "cost_analysis_role" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "ce.amazonaws.com" }
+      Principal = { Service = "budgets.amazonaws.com" } # Updated valid service principal
       Action    = "sts:AssumeRole"
     }]
   })
@@ -372,9 +372,24 @@ resource "aws_iam_user_policy" "support_agent_notaction" {
         Resource = "*"
       },
       {
-        Sid         = "DenySensitiveResources"
-        Effect      = "Deny"
-        Action      = "iam:*"
+        Sid    = "DenySensitiveResources"
+        Effect = "Deny"
+        Action = [
+          "iam:Create*",
+          "iam:Delete*",
+          "iam:Put*",
+          "iam:Update*",
+          "iam:Attach*",
+          "iam:Detach*",
+          "iam:Add*",
+          "iam:Remove*",
+          "iam:Set*",
+          "iam:Change*",
+          "iam:PassRole",
+          "iam:CreateServiceLinkedRole",
+          "iam:TagRole",
+          "iam:UntagRole"
+        ]
         NotResource = [
           "arn:aws:iam::${local.account_id}:user/support-*",
           "arn:aws:iam::${local.account_id}:role/readonly-*"
