@@ -146,6 +146,16 @@ def get_graph():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/graph", methods=["DELETE"])
+def clear_graph():
+    try:
+        orch = get_orchestrator()
+        orch._ensure_builder()
+        orch._builder.clear_graph()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # ── Pathfinder API ────────────────────────────────────────────────────
 
 @app.route("/api/pathfinder/query", methods=["POST"])
@@ -264,6 +274,13 @@ def save_session_state():
         session.permanent = True
     data = request.json or {}
     _session_states[sid] = data
+    return jsonify({"status": "ok"})
+
+@app.route("/api/session/state", methods=["DELETE"])
+def clear_session_state():
+    sid = session.get("sid")
+    if sid in _session_states:
+        del _session_states[sid]
     return jsonify({"status": "ok"})
 
 # ── Pipeline Status ───────────────────────────────────────────────────

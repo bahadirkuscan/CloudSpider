@@ -216,8 +216,19 @@ async function refreshCredentials() {
         const active = creds.find(c => c.is_active);
         const badge = document.getElementById("profile-badge");
         const text = document.getElementById("profile-badge-text");
-        if (active) { badge.classList.add("active"); text.textContent = active.name; }
-        else { badge.classList.remove("active"); text.textContent = "No Profile"; }
+        if (active) { 
+            badge.classList.add("active"); 
+            text.textContent = active.name; 
+            if (active.identity && !initialCompromisedArn) {
+                initialCompromisedArn = active.identity.arn;
+                compromisedNodes.add(initialCompromisedArn);
+            }
+        }
+        else { 
+            badge.classList.remove("active"); 
+            text.textContent = "No Profile"; 
+            initialCompromisedArn = null;
+        }
     } catch (e) { /* silent */ }
 }
 
@@ -1086,6 +1097,8 @@ async function clearGraph() {
     edgeStatus = {};
     edgeManualOffset = {};
     filterInitialized = false;
+    compromisedNodes.clear();
+    if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
     visibleNodeIds.clear();
     visibleEdgeTypes.clear();
     if (simulation) simulation.stop();
@@ -1098,6 +1111,15 @@ async function clearGraph() {
     document.getElementById("filter-nodes-list").innerHTML = "";
     document.getElementById("filter-edges-list").innerHTML = "";
     clearPathfinder();
+    
+    // Clear backend state and graph
+    try {
+        await api("/api/session/state", "DELETE");
+        await api("/api/graph", "DELETE");
+    } catch (e) {
+        console.error("Failed to clear backend state:", e);
+    }
+    
     showToast("Graph cleared. Click 'Build Graph' to rebuild.", "info");
 }
 
