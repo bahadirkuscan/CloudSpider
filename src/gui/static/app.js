@@ -38,6 +38,8 @@ const EDGE_STATUS_STYLES = {
 // Filter visibility state
 let visibleNodeIds = new Set();
 let visibleEdgeTypes = new Set();
+let knownNodeIds = new Set();
+let knownEdgeTypes = new Set();
 let filterInitialized = false;
 
 // Tracks the initial compromised ARN from active profile activation
@@ -138,11 +140,25 @@ async function api(url, method = "GET", body = null) {
 // ── Session State Persistence ────────────────────────────────────────
 async function persistSessionState() {
     try {
+        const nodePositions = {};
+        if (graphData && graphData.nodes) {
+            graphData.nodes.forEach(n => {
+                if (n.fx !== undefined && n.fy !== undefined) {
+                    nodePositions[n.id] = { fx: n.fx, fy: n.fy };
+                }
+            });
+        }
         await api("/api/session/state", "POST", {
             compromisedNodes: [...compromisedNodes],
             edgeStatus: { ...edgeStatus },
             edgeManualOffset: { ...edgeManualOffset },
             initialCompromisedArn,
+            nodePositions,
+            visibleNodeIds: [...visibleNodeIds],
+            visibleEdgeTypes: [...visibleEdgeTypes],
+            knownNodeIds: [...knownNodeIds],
+            knownEdgeTypes: [...knownEdgeTypes],
+            filterInitialized
         });
     } catch (_) { /* best-effort */ }
 }
@@ -155,6 +171,12 @@ async function restoreSessionState() {
             edgeStatus = res.edgeStatus || {};
             edgeManualOffset = res.edgeManualOffset || {};
             initialCompromisedArn = res.initialCompromisedArn || null;
+            if (res.visibleNodeIds) visibleNodeIds = new Set(res.visibleNodeIds);
+            if (res.visibleEdgeTypes) visibleEdgeTypes = new Set(res.visibleEdgeTypes);
+            if (res.knownNodeIds) knownNodeIds = new Set(res.knownNodeIds);
+            if (res.knownEdgeTypes) knownEdgeTypes = new Set(res.knownEdgeTypes);
+            if (res.filterInitialized !== undefined) filterInitialized = res.filterInitialized;
+            if (res.nodePositions) window._snapshotNodePositions = res.nodePositions;
             return true;
         }
     } catch (_) { /* no state */ }
@@ -333,6 +355,18 @@ function initGraph() {
 async function loadGraphData() {
     try {
         graphData = await api("/api/graph");
+        
+        if (window._snapshotNodePositions) {
+            graphData.nodes.forEach(n => {
+                const pos = window._snapshotNodePositions[n.id];
+                if (pos) {
+                    n.fx = pos.fx;
+                    n.fy = pos.fy;
+                }
+            });
+            window._snapshotNodePositions = null;
+        }
+
         // Re-apply initial compromised node from active profile
         if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
         computeEdgeStatuses();
@@ -506,7 +540,10 @@ function renderGraph() {
                 linkHitbox.attr("d", buildPath);
                 updateLabelPositions();
             })
-            .on("end", function () { d3.select(this).style("cursor", "grab"); })
+            .on("end", function () { 
+                d3.select(this).style("cursor", "grab"); 
+                persistSessionState();
+            })
         );
     linkLabel.append("rect").attr("class", "link-label-bg");
     linkLabel.append("text")
@@ -618,7 +655,11 @@ function renderGraph() {
 // Drag handlers — nodes stay pinned where dragged for free positioning
 function dragStart(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
 function dragging(e, d) { d.fx = e.x; d.fy = e.y; }
-function dragEnd(e, d) { if (!e.active) simulation.alphaTarget(0); /* keep d.fx/d.fy so node stays pinned */ }
+function dragEnd(e, d) { 
+    if (!e.active) simulation.alphaTarget(0); 
+    /* keep d.fx/d.fy so node stays pinned */ 
+    persistSessionState();
+}
 
 // ── Tooltip ──────────────────────────────────────────────────────────
 function showTooltip(event, d) {
@@ -1000,11 +1041,25 @@ async function saveSnapshot() {
     if (!password) return showToast("Password is required to save a snapshot.", "error");
     setLoading("btn-save-snap", true);
     try {
+        const nodePositions = {};
+        if (graphData && graphData.nodes) {
+            graphData.nodes.forEach(n => {
+                if (n.fx !== undefined && n.fy !== undefined) {
+                    nodePositions[n.id] = { fx: n.fx, fy: n.fy };
+                }
+            });
+        }
         const clientState = {
             compromisedNodes: [...compromisedNodes],
             edgeStatus: { ...edgeStatus },
             edgeManualOffset: { ...edgeManualOffset },
             initialCompromisedArn,
+            nodePositions,
+            visibleNodeIds: [...visibleNodeIds],
+            visibleEdgeTypes: [...visibleEdgeTypes],
+            knownNodeIds: [...knownNodeIds],
+            knownEdgeTypes: [...knownEdgeTypes],
+            filterInitialized
         };
         const res = await api("/api/snapshots/save", "POST", { name, password, state: clientState });
         showToast(`Snapshot "${name}" saved (${res.nodes} nodes, ${res.links} links).`, "success");
@@ -1021,12 +1076,27 @@ async function refreshSnapshots() {
         list.innerHTML = "";
         if (!snaps.length) { list.innerHTML = '<p class="text-muted" style="font-size:12px">No snapshots saved yet.</p>'; return; }
         snaps.forEach(s => {
+            let formattedTime = "";
+            if (s.timestamp) {
+                const d = new Date(s.timestamp);
+                if (!isNaN(d.getTime())) {
+                    const dd = String(d.getDate()).padStart(2, '0');
+                    const mm = String(d.getMonth() + 1).padStart(2, '0');
+                    const yyyy = d.getFullYear();
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const min = String(d.getMinutes()).padStart(2, '0');
+                    formattedTime = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+                } else {
+                    formattedTime = s.timestamp;
+                }
+            }
+            
             const div = document.createElement("div");
             div.className = "snapshot-item";
             div.innerHTML = `
                 <div class="snapshot-info">
                     <div class="snapshot-name">${s.name}</div>
-                    <div class="snapshot-meta">${s.nodes || 0} nodes · ${s.links || 0} edges · ${s.timestamp || ""}</div>
+                    <div class="snapshot-meta">${s.nodes || 0} nodes · ${s.links || 0} edges · ${formattedTime}</div>
                 </div>
                 <div class="cred-item-actions">
                     <button class="btn btn-sm btn-ghost" onclick="loadSnapshot('${s.name}')">Load</button>
@@ -1048,6 +1118,12 @@ async function loadSnapshot(name) {
             edgeStatus = res.state.edgeStatus || {};
             edgeManualOffset = res.state.edgeManualOffset || {};
             initialCompromisedArn = res.state.initialCompromisedArn || null;
+            if (res.state.visibleNodeIds) visibleNodeIds = new Set(res.state.visibleNodeIds);
+            if (res.state.visibleEdgeTypes) visibleEdgeTypes = new Set(res.state.visibleEdgeTypes);
+            if (res.state.knownNodeIds) knownNodeIds = new Set(res.state.knownNodeIds);
+            if (res.state.knownEdgeTypes) knownEdgeTypes = new Set(res.state.knownEdgeTypes);
+            if (res.state.filterInitialized !== undefined) filterInitialized = res.state.filterInitialized;
+            if (res.state.nodePositions) window._snapshotNodePositions = res.state.nodePositions;
         }
         showToast(`Snapshot "${name}" loaded.`, "success");
         await loadGraphData();
@@ -1101,6 +1177,8 @@ async function clearGraph() {
     if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
     visibleNodeIds.clear();
     visibleEdgeTypes.clear();
+    knownNodeIds.clear();
+    knownEdgeTypes.clear();
     if (simulation) simulation.stop();
     gLinks.selectAll("*").remove();
     gLinkLabels.selectAll("*").remove();
@@ -1162,10 +1240,18 @@ function populateFilterCheckboxes() {
         visibleEdgeTypes = new Set(edgeTypes);
         filterInitialized = true;
     } else {
-        // Add any new nodes/types that appeared
-        graphData.nodes.forEach(n => visibleNodeIds.add(n.id));
-        edgeTypes.forEach(t => visibleEdgeTypes.add(t));
+        // Add any NEW nodes/types that appeared (preserves unchecked state of known nodes)
+        graphData.nodes.forEach(n => {
+            if (!knownNodeIds.has(n.id)) visibleNodeIds.add(n.id);
+        });
+        edgeTypes.forEach(t => {
+            if (!knownEdgeTypes.has(t)) visibleEdgeTypes.add(t);
+        });
     }
+    
+    // Update known sets
+    graphData.nodes.forEach(n => knownNodeIds.add(n.id));
+    edgeTypes.forEach(t => knownEdgeTypes.add(t));
 
     // Build node checkboxes — per individual node, sorted alphabetically
     const nodeList = document.getElementById("filter-nodes-list");
@@ -1193,6 +1279,7 @@ function populateFilterCheckboxes() {
             else visibleNodeIds.delete(n.id);
             nodeSelectAllCb.checked = sortedNodes.every(nd => visibleNodeIds.has(nd.id));
             renderGraph();
+            persistSessionState();
         });
         nodeCbs.push({ cb, node: n });
         const dot = document.createElement("span");
@@ -1214,6 +1301,7 @@ function populateFilterCheckboxes() {
             else visibleNodeIds.delete(node.id);
         });
         renderGraph();
+        persistSessionState();
     });
 
     // Build edge checkboxes
@@ -1242,6 +1330,7 @@ function populateFilterCheckboxes() {
             else visibleEdgeTypes.delete(t);
             edgeSelectAllCb.checked = sortedEdgeTypes.every(et => visibleEdgeTypes.has(et));
             renderGraph();
+            persistSessionState();
         });
         edgeCbs.push({ cb, type: t });
         lbl.appendChild(cb);
@@ -1256,5 +1345,6 @@ function populateFilterCheckboxes() {
             else visibleEdgeTypes.delete(type);
         });
         renderGraph();
+        persistSessionState();
     });
 }

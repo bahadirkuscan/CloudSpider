@@ -640,6 +640,12 @@ class Orchestrator:
             "edge_status": cs.get("edgeStatus", {}),
             "edge_manual_offset": cs.get("edgeManualOffset", {}),
             "initial_compromised_arn": cs.get("initialCompromisedArn", None),
+            "visible_node_ids": cs.get("visibleNodeIds", []),
+            "visible_edge_types": cs.get("visibleEdgeTypes", []),
+            "known_node_ids": cs.get("knownNodeIds", []),
+            "known_edge_types": cs.get("knownEdgeTypes", []),
+            "filter_initialized": cs.get("filterInitialized", False),
+            "node_positions": cs.get("nodePositions", {}),
             "credentials": {
                 name: {
                     "access_key_id": c["access_key_id"],
@@ -735,6 +741,12 @@ class Orchestrator:
                 "edgeStatus": data.get("edge_status", {}),
                 "edgeManualOffset": data.get("edge_manual_offset", {}),
                 "initialCompromisedArn": data.get("initial_compromised_arn"),
+                "visibleNodeIds": data.get("visible_node_ids", []),
+                "visibleEdgeTypes": data.get("visible_edge_types", []),
+                "knownNodeIds": data.get("known_node_ids", []),
+                "knownEdgeTypes": data.get("known_edge_types", []),
+                "filterInitialized": data.get("filter_initialized", False),
+                "nodePositions": data.get("node_positions", {}),
                 "activeProfile": data.get("active_profile"),
             },
         }
@@ -758,6 +770,8 @@ class Orchestrator:
                     })
                 except Exception:
                     snapshots.append({"name": filename.replace(".json", ""), "error": "corrupt"})
+        # Sort snapshots by timestamp descending (most recent first)
+        snapshots.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return snapshots
 
     def delete_snapshot(self, name: str):
