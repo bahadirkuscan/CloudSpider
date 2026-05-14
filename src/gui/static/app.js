@@ -52,20 +52,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     refreshCredentials();
     refreshSnapshots();
     // Restore session state and graph on page refresh
-    const hadState = await restoreSessionState();
-    if (hadState) {
-        try {
-            const gd = await api("/api/graph");
-            if (gd.nodes && gd.nodes.length) {
-                graphData = gd;
-                if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
-                computeEdgeStatuses();
-                populateFilterCheckboxes();
-                renderGraph();
-                populatePathfinderDropdowns();
-            }
-        } catch (_) { /* no graph yet */ }
-    }
+    await restoreSessionState();
+    await loadGraphData();
 });
 
 // ── SocketIO ─────────────────────────────────────────────────────────
@@ -143,9 +131,10 @@ async function persistSessionState() {
         const nodePositions = {};
         if (graphData && graphData.nodes) {
             graphData.nodes.forEach(n => {
-                if (n.fx !== undefined && n.fy !== undefined) {
-                    nodePositions[n.id] = { fx: n.fx, fy: n.fy };
-                }
+                nodePositions[n.id] = { 
+                    x: n.x, y: n.y, 
+                    fx: n.fx, fy: n.fy 
+                };
             });
         }
         await api("/api/session/state", "POST", {
@@ -360,8 +349,10 @@ async function loadGraphData() {
             graphData.nodes.forEach(n => {
                 const pos = window._snapshotNodePositions[n.id];
                 if (pos) {
-                    n.fx = pos.fx;
-                    n.fy = pos.fy;
+                    if (pos.x !== undefined) n.x = pos.x;
+                    if (pos.y !== undefined) n.y = pos.y;
+                    if (pos.fx !== undefined) n.fx = pos.fx;
+                    if (pos.fy !== undefined) n.fy = pos.fy;
                 }
             });
             window._snapshotNodePositions = null;
@@ -649,6 +640,9 @@ function renderGraph() {
             updateLabelPositions();
             nodeG.attr("transform", d => `translate(${d.x},${d.y})`);
             label.attr("x", d => d.x).attr("y", d => d.y);
+        })
+        .on("end", () => {
+            persistSessionState();
         });
 }
 
@@ -1044,9 +1038,10 @@ async function saveSnapshot() {
         const nodePositions = {};
         if (graphData && graphData.nodes) {
             graphData.nodes.forEach(n => {
-                if (n.fx !== undefined && n.fy !== undefined) {
-                    nodePositions[n.id] = { fx: n.fx, fy: n.fy };
-                }
+                nodePositions[n.id] = { 
+                    x: n.x, y: n.y, 
+                    fx: n.fx, fy: n.fy 
+                };
             });
         }
         const clientState = {
