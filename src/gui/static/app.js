@@ -481,6 +481,18 @@ function renderGraph() {
         const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
         const sId = typeof d.source === "object" ? d.source.id : d.source;
         const tId = typeof d.target === "object" ? d.target.id : d.target;
+
+        // Self-loop: draw a visible loop arc above the node
+        if (sId === tId) {
+            const r = 55; // loop radius
+            const manual = edgeManualOffset[edgeKey(d)] || 0;
+            const cx1 = s.x - r + manual * 0.3;
+            const cy1 = s.y - r * 1.8;
+            const cx2 = s.x + r + manual * 0.3;
+            const cy2 = s.y - r * 1.8;
+            return `M${s.x - 8},${s.y - 8}C${cx1},${cy1} ${cx2},${cy2} ${s.x + 8},${s.y - 8}`;
+        }
+
         const dpk = `${sId}||${tId}`;
         const dirCount = pairCount[dpk] || 1;
         const dirIdx = pairIndex[edgeKey(d)] || 0;
@@ -590,31 +602,38 @@ function renderGraph() {
             const t = typeof d.target === "object" ? d.target : { x: 0, y: 0 };
             const sId = typeof d.source === "object" ? d.source.id : d.source;
             const tId = typeof d.target === "object" ? d.target.id : d.target;
-            const dpk = `${sId}||${tId}`;
-            const dirCount = pairCount[dpk] || 1;
-            const dirIdx = pairIndex[edgeKey(d)] || 0;
-            const rpk = `${tId}||${sId}`;
-            const hasReverse = (pairCount[rpk] || 0) > 0;
-            const bk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
-            const totalEdges = biCount[bk] || 1;
-            const manual = edgeManualOffset[edgeKey(d)] || 0;
-            const canonFirst = sId < tId;
-            const cdx = canonFirst ? (t.x - s.x) : (s.x - t.x);
-            const cdy = canonFirst ? (t.y - s.y) : (s.y - t.y);
-            const clen = Math.max(Math.sqrt(cdx * cdx + cdy * cdy), 1);
             let mx, my;
-            if (totalEdges <= 1 && dirCount <= 1 && manual === 0) {
-                mx = (s.x + t.x) / 2; my = (s.y + t.y) / 2;
+
+            // Self-loop: place label at the top of the loop arc
+            if (sId === tId) {
+                const r = 55;
+                const manual = edgeManualOffset[edgeKey(d)] || 0;
+                mx = s.x + manual * 0.3;
+                my = s.y - r * 1.8 - 4;
             } else {
-                let baseOffset = hasReverse ? (canonFirst ? 1 : -1) * 50 : 0;
-                const spreadOffset = (dirIdx - (dirCount - 1) / 2) * 80;
-                const totalOffset = baseOffset + spreadOffset + manual;
-                // Control point of the quadratic Bezier
-                const cx = (s.x + t.x) / 2 - cdy * totalOffset / clen * 0.5;
-                const cy = (s.y + t.y) / 2 + cdx * totalOffset / clen * 0.5;
-                // Actual curve midpoint at t=0.5: (start + 2*control + end) / 4
-                mx = (s.x + 2 * cx + t.x) / 4;
-                my = (s.y + 2 * cy + t.y) / 4;
+                const dpk = `${sId}||${tId}`;
+                const dirCount = pairCount[dpk] || 1;
+                const dirIdx = pairIndex[edgeKey(d)] || 0;
+                const rpk = `${tId}||${sId}`;
+                const hasReverse = (pairCount[rpk] || 0) > 0;
+                const bk = sId < tId ? `${sId}||${tId}` : `${tId}||${sId}`;
+                const totalEdges = biCount[bk] || 1;
+                const manual = edgeManualOffset[edgeKey(d)] || 0;
+                const canonFirst = sId < tId;
+                const cdx = canonFirst ? (t.x - s.x) : (s.x - t.x);
+                const cdy = canonFirst ? (t.y - s.y) : (s.y - t.y);
+                const clen = Math.max(Math.sqrt(cdx * cdx + cdy * cdy), 1);
+                if (totalEdges <= 1 && dirCount <= 1 && manual === 0) {
+                    mx = (s.x + t.x) / 2; my = (s.y + t.y) / 2;
+                } else {
+                    let baseOffset = hasReverse ? (canonFirst ? 1 : -1) * 50 : 0;
+                    const spreadOffset = (dirIdx - (dirCount - 1) / 2) * 80;
+                    const totalOffset = baseOffset + spreadOffset + manual;
+                    const cx = (s.x + t.x) / 2 - cdy * totalOffset / clen * 0.5;
+                    const cy = (s.y + t.y) / 2 + cdx * totalOffset / clen * 0.5;
+                    mx = (s.x + 2 * cx + t.x) / 4;
+                    my = (s.y + 2 * cy + t.y) / 4;
+                }
             }
             const g = d3.select(this);
             const txt = g.select("text");
@@ -871,7 +890,10 @@ async function executePathStep(pathIdx, stepIdx) {
             // Update edge and node status
             const key = `${step.from_arn}|${step.to_arn}|${step.relationship}`;
             edgeStatus[key] = "taken";
-            compromisedNodes.add(step.to_arn);
+            // Only mark target as compromised if the action grants access
+            if (res.compromises_target !== false) {
+                compromisedNodes.add(step.to_arn);
+            }
 
             // Auto-register credentials if returned
             if (res.result.access_key_id) {
@@ -987,10 +1009,13 @@ async function executeAction() {
         if (res.success) {
             area.innerHTML = `<div class="modal-result success">${JSON.stringify(res.result, null, 2)}</div>`;
             showToast("Action executed successfully.", "success");
-            // Mark this edge as taken and target as compromised
+            // Mark this edge as taken
             const key = `${srcId}|${tgtId}|${currentModal.type}`;
             edgeStatus[key] = "taken";
-            compromisedNodes.add(tgtId);
+            // Only mark target as compromised if the action grants access
+            if (res.compromises_target !== false) {
+                compromisedNodes.add(tgtId);
+            }
             // If we got new credentials, auto-register and activate them
             if (res.result.access_key_id) {
                 const credName = `${currentModal.type}-${tgtId.split('/').pop() || tgtId.split(':').pop()}`;
