@@ -35,6 +35,14 @@ A collection of intentionally vulnerable AWS IAM environments for testing and va
 | 08 | [Deep Transitive Chain](hard/lab08_deep_transitive/) | Large (15 users, 10 roles, 5 groups, 3 EC2s, 2 Lambdas, 2 S3, 1 RDS) | 5+ hop buried chain through noise | ✅ Transitive Cypher pathfinding |
 | 09 | [Condition & Boundary Evasion](hard/lab09_condition_boundary/) | Large (10 users, 8 roles, 3 groups, 2 EC2, 1 Lambda, 2 S3) | Boundary bypass + region condition gap + trust policy flaw | ⚠️ Partial |
 
+### Extras
+Larger, more realistic scenarios with progressive tag-scoped discovery — each chain hop unlocks broader visibility, mirroring how an attacker actually moves through an enterprise. **Misconfigurations are sourced purely from IAM policies** (no env vars, no secret stores, no SSM, no service-runtime contents). Designed independent of CloudSpider's detection capabilities.
+
+| # | Name | Scale | Vulnerability |
+|---|------|-------|---------------|
+| 10 | [Self-Service Policy Tampering](extras/lab10_cicd_supply_chain/) | Medium (29 users, 14 roles, 6 groups) | `iam:PutGroupPolicy` on own team group → group-inherited `sts:AssumeRole` → `iam:AttachRolePolicy` with `AdministratorAccess` → `sts:AssumeRole` to final role |
+| 11 | [Enterprise Realistic](extras/lab11_enterprise_realistic/) | Large (103 users, 27 roles, 15 groups) | 6-hop chain: `iam:CreateAccessKey` on machine user → `iam:CreatePolicyVersion --set-as-default` → `sts:AssumeRole` via backdoored policy → `iam:UpdateAssumeRolePolicy` on break-glass role → `sts:AssumeRole` to admin |
+
 ## Usage
 
 Each lab provisions **IAM access keys** for the entry-point (attacker) user and a **discovery policy** granting read-only permissions that CloudSpider's extractor needs to enumerate the environment. After `terraform apply`, you get credentials ready to plug into CloudSpider.
