@@ -28,11 +28,25 @@
                     <div id="filter-panel" class="filter-panel hidden">
                         <div class="filter-section">
                             <div class="filter-section-header" onclick="toggleFilterSection('filter-nodes-list')">Nodes <span class="chevron">▶</span></div>
-                            <div id="filter-nodes-list" class="filter-checklist"></div>
+                            <div id="filter-nodes-list" class="filter-checklist">
+                                <div class="filter-search-wrapper">
+                                    <input type="text" id="filter-nodes-search" class="filter-search-input" placeholder="Search nodes…" oninput="filterNodeCheckboxes()">
+                                </div>
+                            </div>
                         </div>
                         <div class="filter-section">
                             <div class="filter-section-header" onclick="toggleFilterSection('filter-edges-list')">Edges <span class="chevron">▶</span></div>
-                            <div id="filter-edges-list" class="filter-checklist"></div>
+                            <div id="filter-edges-list" class="filter-checklist">
+                                <div class="filter-search-wrapper">
+                                    <input type="text" id="filter-edges-search" class="filter-search-input" placeholder="Search edges…" oninput="filterEdgeCheckboxes()">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="filter-section filter-active-edges-section">
+                            <label class="filter-active-edges-label">
+                                <input type="checkbox" id="filter-active-edges-only" onchange="toggleActiveEdgesFilter()">
+                                <span>Show only taken/possible edges</span>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -278,6 +292,7 @@
                     <span>This will execute a real AWS API call against live infrastructure. This action may modify IAM
                         policies, create access keys, or assume roles. Proceed with caution.</span>
                 </div>
+                <div id="modal-edge-warning" class="modal-edge-type-warning hidden"></div>
             </div>
             <div id="modal-result-area"></div>
             <div class="modal-footer">

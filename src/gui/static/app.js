@@ -41,6 +41,8 @@ let visibleEdgeTypes = new Set();
 let knownNodeIds = new Set();
 let knownEdgeTypes = new Set();
 let filterInitialized = false;
+let showActiveEdgesOnly = false;
+let autoFilterPathIdx = null; // index of the path whose auto-filter is active
 
 // Tracks the initial compromised ARN from active profile activation
 let initialCompromisedArn = null;
@@ -147,7 +149,8 @@ async function persistSessionState() {
             visibleEdgeTypes: [...visibleEdgeTypes],
             knownNodeIds: [...knownNodeIds],
             knownEdgeTypes: [...knownEdgeTypes],
-            filterInitialized
+            filterInitialized,
+            showActiveEdgesOnly
         });
     } catch (_) { /* best-effort */ }
 }
@@ -165,6 +168,7 @@ async function restoreSessionState() {
             if (res.knownNodeIds) knownNodeIds = new Set(res.knownNodeIds);
             if (res.knownEdgeTypes) knownEdgeTypes = new Set(res.knownEdgeTypes);
             if (res.filterInitialized !== undefined) filterInitialized = res.filterInitialized;
+            if (res.showActiveEdgesOnly !== undefined) showActiveEdgesOnly = res.showActiveEdgesOnly;
             if (res.nodePositions) window._snapshotNodePositions = res.nodePositions;
             return true;
         }
@@ -361,6 +365,9 @@ async function loadGraphData() {
         // Re-apply initial compromised node from active profile
         if (initialCompromisedArn) compromisedNodes.add(initialCompromisedArn);
         computeEdgeStatuses();
+        // Restore active-edges checkbox state
+        const aeCheckbox = document.getElementById("filter-active-edges-only");
+        if (aeCheckbox) aeCheckbox.checked = showActiveEdgesOnly;
         populateFilterCheckboxes();
         renderGraph();
         populatePathfinderDropdowns();
@@ -399,7 +406,23 @@ function renderGraph() {
     legend.classList.remove("hidden");
 
     // Apply filters — only show visible nodes (by ID) and edge types
-    const filteredNodes = graphData.nodes.filter(n => visibleNodeIds.has(n.id));
+    let filteredNodes = graphData.nodes.filter(n => visibleNodeIds.has(n.id));
+
+    // When "show only taken/possible edges" is active, restrict to nodes on active edges
+    if (showActiveEdgesOnly) {
+        const activeNodeIds = new Set();
+        graphData.links.forEach(l => {
+            const sId = typeof l.source === "object" ? l.source.id : l.source;
+            const tId = typeof l.target === "object" ? l.target.id : l.target;
+            const status = edgeStatus[edgeKey(l)] || "blocked";
+            if (status === "taken" || status === "possible") {
+                activeNodeIds.add(sId);
+                activeNodeIds.add(tId);
+            }
+        });
+        filteredNodes = filteredNodes.filter(n => activeNodeIds.has(n.id));
+    }
+
     const filteredNodeIdSet = new Set(filteredNodes.map(n => n.id));
     const filteredLinks = graphData.links.filter(l => {
         const sId = typeof l.source === "object" ? l.source.id : l.source;
@@ -797,6 +820,9 @@ function renderPathResults(paths) {
             <button class="btn btn-sm btn-primary flex-1" onclick="highlightAndSelectPath(${idx})">
                 🔍 Highlight
             </button>
+            <button class="btn btn-sm btn-auto-filter flex-1" id="btn-auto-filter-${idx}" onclick="autoFilterPath(${idx})">
+                🎯 Filter
+            </button>
             <button class="btn btn-sm btn-danger flex-1" id="btn-exec-all-${idx}" onclick="executeAllSteps(${idx})">
                 ⚡ Execute All
             </button>
@@ -954,10 +980,61 @@ function clearPathfinder() {
     clearHighlights();
     activePath = null;
     activePathIndex = 0;
+    // If auto-filter was active, restore full visibility
+    if (autoFilterPathIdx !== null) {
+        autoFilterPathIdx = null;
+        graphData.nodes.forEach(n => visibleNodeIds.add(n.id));
+        populateFilterCheckboxes();
+        renderGraph();
+        persistSessionState();
+    }
     window._pathfinderPaths = [];
     document.getElementById("path-results").innerHTML = "";
     document.getElementById("path-start").value = "";
     document.getElementById("path-target").value = "";
+}
+
+// Auto-filter: show only nodes on a specific path
+function autoFilterPath(pathIdx) {
+    const path = window._pathfinderPaths[pathIdx];
+    if (!path) return;
+
+    // Toggle off if clicking the same path again
+    if (autoFilterPathIdx === pathIdx) {
+        autoFilterPathIdx = null;
+        // Restore all nodes visible
+        graphData.nodes.forEach(n => visibleNodeIds.add(n.id));
+        document.querySelectorAll(".btn-auto-filter").forEach(b => b.classList.remove("active"));
+        populateFilterCheckboxes();
+        renderGraph();
+        persistSessionState();
+        showToast("Filter cleared — all nodes visible.", "info");
+        return;
+    }
+
+    autoFilterPathIdx = pathIdx;
+
+    // Collect all node ARNs on this path
+    const pathNodeIds = new Set();
+    path.forEach(step => {
+        pathNodeIds.add(step.from_arn);
+        pathNodeIds.add(step.to_arn);
+    });
+
+    // Set visibility to only path nodes
+    visibleNodeIds.clear();
+    pathNodeIds.forEach(id => visibleNodeIds.add(id));
+
+    // Update auto-filter button states
+    document.querySelectorAll(".btn-auto-filter").forEach(b => b.classList.remove("active"));
+    const btn = document.getElementById(`btn-auto-filter-${pathIdx}`);
+    if (btn) btn.classList.add("active");
+
+    populateFilterCheckboxes();
+    renderGraph();
+    highlightAndSelectPath(pathIdx);
+    persistSessionState();
+    showToast(`Filtered to Path ${pathIdx + 1} — ${pathNodeIds.size} nodes shown.`, "info");
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -988,7 +1065,42 @@ function openActionModal(edgeData) {
         fpBtn.textContent = "\ud83d\udeab Mark as False Positive";
         fpBtn.style.display = "";
     }
+    // Show edge-type-specific warning
+    const edgeWarningEl = document.getElementById("modal-edge-warning");
+    const edgeWarning = getEdgeTypeWarning(edgeData.type);
+    if (edgeWarning) {
+        edgeWarningEl.innerHTML = `<span class="icon">\ud83d\udcdd</span><span>${edgeWarning}</span>`;
+        edgeWarningEl.classList.remove("hidden");
+    } else {
+        edgeWarningEl.classList.add("hidden");
+    }
     document.getElementById("action-modal").classList.add("visible");
+}
+
+// Edge-type specific warning messages
+function getEdgeTypeWarning(edgeType) {
+    const warnings = {
+        "ASSUME_ROLE": "This will call sts:AssumeRole to obtain temporary credentials for the target role. The returned session credentials grant all permissions attached to that role.",
+        "PASS_ROLE": "This verifies that the iam:PassRole permission is authorized. PassRole is exercised implicitly when attaching a role to AWS services like Lambda or EC2.",
+        "CreateAccessKey": "This will call iam:CreateAccessKey to generate a new set of permanent AWS credentials (Access Key ID + Secret) for the target IAM user.",
+        "PutUserPolicy": "This will call iam:PutUserPolicy to inject an inline IAM policy with full admin permissions (Action: *, Resource: *) onto the target user.",
+        "AttachUserPolicy": "This will call iam:AttachUserPolicy to attach the AWS-managed AdministratorAccess policy to the target user, granting full account access.",
+        "CreateLoginProfile": "This will call iam:CreateLoginProfile (or UpdateLoginProfile) to set a console password for the target user, enabling AWS Console access.",
+        "PutRolePolicy": "This will call iam:PutRolePolicy to inject an inline IAM policy with full admin permissions (Action: *, Resource: *) onto the target role.",
+        "AttachRolePolicy": "This will call iam:AttachRolePolicy to attach the AWS-managed AdministratorAccess policy to the target role.",
+        "UpdateAssumeRolePolicy": "This will call iam:UpdateAssumeRolePolicy to rewrite the target role's trust policy, allowing the current caller to assume it via sts:AssumeRole.",
+        "PutGroupPolicy": "This will call iam:PutGroupPolicy to inject an inline IAM policy with full admin permissions onto the target group. All group members inherit these permissions.",
+        "AttachGroupPolicy": "This will call iam:AttachGroupPolicy to attach the AWS-managed AdministratorAccess policy to the target group.",
+        "AddUserToGroup": "This will call iam:AddUserToGroup to add the current IAM user to the target group, inheriting all of the group's attached and inline policies.",
+        "CreatePolicyVersion": "This will call iam:CreatePolicyVersion to rewrite a customer-managed IAM policy with full admin permissions and set it as the default version.",
+        "CanUpdateFunction": "This will deploy a credential-extraction payload to the target Lambda function, invoke it to harvest the execution role's temporary credentials, then restore the original code.",
+        "CanRunInstance": "This verifies that ec2:RunInstances is authorized for the target. Full instance launch requires additional parameters (AMI, subnet, instance type).",
+        "CanInvokeFunction": "This will call lambda:InvokeFunction to execute the target Lambda function with an empty event payload and return its response.",
+        "USES_ROLE": "This is a structural relationship — the Lambda function executes under this IAM role. No API call is made. Injecting code into the Lambda will run with this role's permissions.",
+        "MEMBER_OF": "This is a structural relationship — the IAM user belongs to this group and inherits its policies. No API call is made.",
+        "HAS_ACCESS": "This will probe the target resource to verify access. For S3, it lists objects; for RDS, it describes the instance. The probe is read-only.",
+    };
+    return warnings[edgeType] || null;
 }
 
 function closeModal() {
@@ -1079,7 +1191,8 @@ async function saveSnapshot() {
             visibleEdgeTypes: [...visibleEdgeTypes],
             knownNodeIds: [...knownNodeIds],
             knownEdgeTypes: [...knownEdgeTypes],
-            filterInitialized
+            filterInitialized,
+            showActiveEdgesOnly
         };
         const res = await api("/api/snapshots/save", "POST", { name, password, state: clientState });
         showToast(`Snapshot "${name}" saved (${res.nodes} nodes, ${res.links} links).`, "success");
@@ -1143,6 +1256,7 @@ async function loadSnapshot(name) {
             if (res.state.knownNodeIds) knownNodeIds = new Set(res.state.knownNodeIds);
             if (res.state.knownEdgeTypes) knownEdgeTypes = new Set(res.state.knownEdgeTypes);
             if (res.state.filterInitialized !== undefined) filterInitialized = res.state.filterInitialized;
+            if (res.state.showActiveEdgesOnly !== undefined) showActiveEdgesOnly = res.state.showActiveEdgesOnly;
             if (res.state.nodePositions) window._snapshotNodePositions = res.state.nodePositions;
         }
         showToast(`Snapshot "${name}" loaded.`, "success");
@@ -1199,6 +1313,10 @@ async function clearGraph() {
     visibleEdgeTypes.clear();
     knownNodeIds.clear();
     knownEdgeTypes.clear();
+    showActiveEdgesOnly = false;
+    autoFilterPathIdx = null;
+    const aeCheckbox = document.getElementById("filter-active-edges-only");
+    if (aeCheckbox) aeCheckbox.checked = false;
     if (simulation) simulation.stop();
     gLinks.selectAll("*").remove();
     gLinkLabels.selectAll("*").remove();
@@ -1275,12 +1393,21 @@ function populateFilterCheckboxes() {
 
     // Build node checkboxes — per individual node, sorted alphabetically
     const nodeList = document.getElementById("filter-nodes-list");
+    // Preserve search input value
+    const nodeSearchVal = document.getElementById("filter-nodes-search")?.value || "";
     nodeList.innerHTML = "";
+    // Re-add search bar
+    const nodeSearchWrap = document.createElement("div");
+    nodeSearchWrap.className = "filter-search-wrapper";
+    nodeSearchWrap.innerHTML = `<input type="text" id="filter-nodes-search" class="filter-search-input" placeholder="Search nodes\u2026" oninput="filterNodeCheckboxes()" value="${nodeSearchVal.replace(/"/g, '&quot;')}">`;
+    nodeList.appendChild(nodeSearchWrap);
+
     const sortedNodes = [...graphData.nodes].sort((a, b) => a.name.localeCompare(b.name));
 
     // Select All checkbox for nodes
     const nodeSelectAllLbl = document.createElement("label");
     nodeSelectAllLbl.style.cssText = "font-weight:600;border-bottom:1px solid var(--glass-border);padding-bottom:6px;margin-bottom:2px";
+    nodeSelectAllLbl.setAttribute("data-filter-role", "select-all");
     const nodeSelectAllCb = document.createElement("input");
     nodeSelectAllCb.type = "checkbox";
     nodeSelectAllCb.checked = sortedNodes.every(n => visibleNodeIds.has(n.id));
@@ -1291,6 +1418,7 @@ function populateFilterCheckboxes() {
     const nodeCbs = [];
     sortedNodes.forEach(n => {
         const lbl = document.createElement("label");
+        lbl.setAttribute("data-filter-name", n.name.toLowerCase());
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = visibleNodeIds.has(n.id);
@@ -1324,14 +1452,25 @@ function populateFilterCheckboxes() {
         persistSessionState();
     });
 
+    // Apply existing node search filter if there is text
+    if (nodeSearchVal) filterNodeCheckboxes();
+
     // Build edge checkboxes
     const edgeList = document.getElementById("filter-edges-list");
+    const edgeSearchVal = document.getElementById("filter-edges-search")?.value || "";
     edgeList.innerHTML = "";
+    // Re-add search bar
+    const edgeSearchWrap = document.createElement("div");
+    edgeSearchWrap.className = "filter-search-wrapper";
+    edgeSearchWrap.innerHTML = `<input type="text" id="filter-edges-search" class="filter-search-input" placeholder="Search edges\u2026" oninput="filterEdgeCheckboxes()" value="${edgeSearchVal.replace(/"/g, '&quot;')}">`;
+    edgeList.appendChild(edgeSearchWrap);
+
     const sortedEdgeTypes = [...edgeTypes].sort();
 
     // Select All checkbox for edges
     const edgeSelectAllLbl = document.createElement("label");
     edgeSelectAllLbl.style.cssText = "font-weight:600;border-bottom:1px solid var(--glass-border);padding-bottom:6px;margin-bottom:2px";
+    edgeSelectAllLbl.setAttribute("data-filter-role", "select-all");
     const edgeSelectAllCb = document.createElement("input");
     edgeSelectAllCb.type = "checkbox";
     edgeSelectAllCb.checked = sortedEdgeTypes.every(t => visibleEdgeTypes.has(t));
@@ -1342,6 +1481,7 @@ function populateFilterCheckboxes() {
     const edgeCbs = [];
     sortedEdgeTypes.forEach(t => {
         const lbl = document.createElement("label");
+        lbl.setAttribute("data-filter-name", t.toLowerCase());
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = visibleEdgeTypes.has(t);
@@ -1367,4 +1507,52 @@ function populateFilterCheckboxes() {
         renderGraph();
         persistSessionState();
     });
+
+    // Apply existing edge search filter if there is text
+    if (edgeSearchVal) filterEdgeCheckboxes();
+}
+
+// ── Filter Search Functions ──────────────────────────────────────────
+
+function filterNodeCheckboxes() {
+    const query = (document.getElementById("filter-nodes-search")?.value || "").toLowerCase();
+    const nodeList = document.getElementById("filter-nodes-list");
+    const labels = nodeList.querySelectorAll("label[data-filter-name]");
+    labels.forEach(lbl => {
+        const name = lbl.getAttribute("data-filter-name");
+        if (!query || name.startsWith(query)) {
+            lbl.style.display = "";
+        } else {
+            lbl.style.display = "none";
+        }
+    });
+    // Always show "Select All"
+    const selectAll = nodeList.querySelector("label[data-filter-role='select-all']");
+    if (selectAll) selectAll.style.display = query ? "none" : "";
+}
+
+function filterEdgeCheckboxes() {
+    const query = (document.getElementById("filter-edges-search")?.value || "").toLowerCase();
+    const edgeList = document.getElementById("filter-edges-list");
+    const labels = edgeList.querySelectorAll("label[data-filter-name]");
+    labels.forEach(lbl => {
+        const name = lbl.getAttribute("data-filter-name");
+        if (!query || name.startsWith(query)) {
+            lbl.style.display = "";
+        } else {
+            lbl.style.display = "none";
+        }
+    });
+    // Always show "Select All"
+    const selectAll = edgeList.querySelector("label[data-filter-role='select-all']");
+    if (selectAll) selectAll.style.display = query ? "none" : "";
+}
+
+// ── Active Edges Only Toggle ─────────────────────────────────────────
+
+function toggleActiveEdgesFilter() {
+    const cb = document.getElementById("filter-active-edges-only");
+    showActiveEdgesOnly = cb.checked;
+    renderGraph();
+    persistSessionState();
 }

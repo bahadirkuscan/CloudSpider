@@ -743,24 +743,40 @@ select.form-input {
     stroke-width: 1;
 }
 
-/* Path highlight animation */
+/* Path highlight animation — dramatically visible */
 .link-line.highlighted {
-    stroke-opacity: 1;
-    animation: edge-glow 1.5s ease-in-out infinite alternate;
+    stroke: var(--accent-cyan) !important;
+    stroke-width: 5 !important;
+    stroke-opacity: 1 !important;
+    stroke-dasharray: none !important;
+    filter: drop-shadow(0 0 8px var(--accent-cyan)) drop-shadow(0 0 16px var(--accent-cyan));
+    animation: edge-glow 1.2s ease-in-out infinite alternate;
 }
 
 @keyframes edge-glow {
-    from { stroke-opacity: 0.6; filter: none; }
-    to { stroke-opacity: 1; filter: drop-shadow(0 0 4px var(--accent-cyan)); }
+    from {
+        filter: drop-shadow(0 0 6px var(--accent-cyan)) drop-shadow(0 0 12px rgba(86, 212, 221, 0.5));
+        stroke-width: 4;
+    }
+    to {
+        filter: drop-shadow(0 0 14px var(--accent-cyan)) drop-shadow(0 0 28px rgba(86, 212, 221, 0.8));
+        stroke-width: 6;
+    }
 }
 
 .node-circle.highlighted {
-    animation: node-pulse 1.5s ease-in-out infinite alternate;
+    animation: node-pulse 1.2s ease-in-out infinite alternate;
 }
 
 @keyframes node-pulse {
-    from { filter: brightness(1); }
-    to { filter: brightness(1.5) drop-shadow(0 0 10px var(--accent-cyan)); }
+    from {
+        filter: brightness(1.2) drop-shadow(0 0 8px var(--accent-cyan));
+        stroke-width: 3;
+    }
+    to {
+        filter: brightness(1.8) drop-shadow(0 0 20px var(--accent-cyan)) drop-shadow(0 0 40px rgba(86, 212, 221, 0.6));
+        stroke-width: 5;
+    }
 }
 
 /* Compromised node styles */
@@ -1234,4 +1250,106 @@ option.compromised-option {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ── Filter Search Input ───────────────────────────────────────── */
+.filter-search-wrapper {
+    padding: 6px 10px;
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 2;
+}
+
+.filter-search-input {
+    width: 100%;
+    padding: 5px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    outline: none;
+    transition: border-color var(--transition-fast);
+}
+
+.filter-search-input:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12);
+}
+
+.filter-search-input::placeholder {
+    color: var(--text-muted);
+}
+
+/* ── Active Edges Only Checkbox ────────────────────────────────── */
+.filter-active-edges-section {
+    border-bottom: none !important;
+}
+
+.filter-active-edges-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.filter-active-edges-label:hover {
+    background: var(--glass-bg);
+    color: var(--text-primary);
+}
+
+.filter-active-edges-label input[type="checkbox"] {
+    accent-color: var(--accent-orange);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+/* ── Edge-Type Specific Warning in Modal ───────────────────────── */
+.modal-edge-type-warning {
+    padding: 12px;
+    background: rgba(240, 136, 62, 0.1);
+    border: 1px solid rgba(240, 136, 62, 0.25);
+    border-radius: var(--radius-sm);
+    color: var(--accent-orange);
+    font-size: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+}
+
+.modal-edge-type-warning .icon {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.modal-edge-type-warning.hidden {
+    display: none;
+}
+
+/* ── Path Card Auto-Filter Button ──────────────────────────────── */
+.btn-auto-filter {
+    background: rgba(86, 212, 221, 0.1);
+    border: 1px solid rgba(86, 212, 221, 0.25);
+    color: var(--accent-cyan);
+}
+
+.btn-auto-filter:hover {
+    background: rgba(86, 212, 221, 0.2);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 8px rgba(86, 212, 221, 0.2);
+}
+
+.btn-auto-filter.active {
+    background: rgba(86, 212, 221, 0.2);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 8px rgba(86, 212, 221, 0.3);
 }
