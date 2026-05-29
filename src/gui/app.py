@@ -119,7 +119,7 @@ def get_orchestrator() -> Orchestrator:
     """Return the Orchestrator for the current user, creating one if needed."""
     username = current_user.username
     if username not in _orchestrators:
-        _orchestrators[username] = Orchestrator()
+        _orchestrators[username] = Orchestrator(owner=username)
         logger.info(f"New orchestrator created for user: {username}")
     return _orchestrators[username]
 
@@ -210,13 +210,19 @@ def admin_delete_user(username):
     try:
         # Clean up user's snapshots
         snapshots = userdb.list_snapshots_for_user(username)
-        orch = Orchestrator()  # temporary orchestrator for file deletion
+        orch = Orchestrator(owner=username)  # scoped orchestrator for cleanup
         for snap in snapshots.get("own", []):
             try:
                 orch.delete_snapshot_file(snap["filename"])
                 userdb.delete_snapshot_meta(snap["filename"])
             except Exception:
                 pass
+        # Clear the user's Neo4j graph data
+        try:
+            orch._ensure_builder()
+            orch._builder.clear_graph()
+        except Exception:
+            pass
         userdb.delete_user(username)
         # Remove orchestrator if exists
         if username in _orchestrators:
