@@ -1355,3 +1355,273 @@ option.compromised-option {
     border-color: var(--accent-cyan);
     box-shadow: 0 0 8px rgba(86, 212, 221, 0.3);
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Auth & Admin UI Styles
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── User Badge ────────────────────────────────────────────────────── */
+.user-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    backdrop-filter: blur(var(--glass-blur));
+    transition: all var(--transition-normal);
+}
+
+.user-badge:hover {
+    border-color: var(--bg-hover);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+#user-badge-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── User Role Tag ─────────────────────────────────────────────────── */
+.user-role-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    line-height: 1.4;
+}
+
+.user-role-tag.role-admin {
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--accent-red);
+    border: 1px solid rgba(248, 81, 73, 0.25);
+}
+
+.user-role-tag.role-full {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent-blue);
+    border: 1px solid rgba(88, 166, 255, 0.25);
+}
+
+.user-role-tag.role-readonly {
+    background: rgba(139, 148, 158, 0.15);
+    color: var(--text-secondary);
+    border: 1px solid rgba(139, 148, 158, 0.25);
+}
+
+/* ── Snapshot Tabs ─────────────────────────────────────────────────── */
+.snapshot-tabs {
+    display: flex;
+    background: var(--bg-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-top: 12px;
+    margin-bottom: 10px;
+}
+
+.snapshot-tab {
+    flex: 1;
+    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+}
+
+.snapshot-tab:hover {
+    color: var(--text-secondary);
+    background: var(--glass-bg);
+}
+
+.snapshot-tab.active {
+    background: var(--accent-blue);
+    color: #fff;
+}
+
+/* ── Snapshot Tab Content ──────────────────────────────────────────── */
+.snapshot-tab-content {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* ── Snapshot Visibility Toggle ────────────────────────────────────── */
+.snapshot-visibility-toggle {
+    font-size: 14px;
+    padding: 3px 6px !important;
+    min-width: auto;
+}
+
+.snapshot-visibility-toggle:hover {
+    background: rgba(88, 166, 255, 0.1);
+}
+
+/* ── Snapshot Created By Label ─────────────────────────────────────── */
+.snapshot-created-by {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    font-style: italic;
+}
+
+/* ── Admin Modal ───────────────────────────────────────────────────── */
+.admin-modal {
+    width: 600px;
+    max-width: 90vw;
+}
+
+.admin-body {
+    margin-bottom: 0;
+}
+
+.admin-section {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.admin-section:first-child {
+    padding-top: 0;
+}
+
+.admin-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.admin-section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* ── Admin Password Form ──────────────────────────────────────────── */
+.admin-password-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.admin-password-form .btn {
+    align-self: flex-start;
+}
+
+/* ── Admin Create User Form ───────────────────────────────────────── */
+.admin-create-user-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.admin-create-user-form .btn {
+    align-self: flex-start;
+}
+
+/* ── Admin User List ──────────────────────────────────────────────── */
+.admin-user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.admin-user-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.admin-user-item:hover {
+    border-color: var(--bg-hover);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-user-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-user-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.admin-user-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* ── Role Select in Admin ─────────────────────────────────────────── */
+.role-select {
+    width: auto;
+    min-width: 100px;
+    padding: 4px 28px 4px 10px;
+    font-size: 12px;
+}
+
+/* ── Password Modal ───────────────────────────────────────────────── */
+.password-modal {
+    width: 400px;
+    max-width: 90vw;
+}
+
+/* ── Read-Only Disabled State ─────────────────────────────────────── */
+.readonly-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+    user-select: none;
+    filter: grayscale(0.3);
+}
+
+/* ── Modal display:flex overrides for new modals ──────────────────── */
+#admin-modal[style*="display: flex"],
+#admin-modal[style*="display:flex"] {
+    opacity: 1;
+    visibility: visible;
+}
+
+#admin-modal[style*="display: flex"] .modal,
+#admin-modal[style*="display:flex"] .modal {
+    transform: translateY(0) scale(1);
+}
+
+#password-modal[style*="display: flex"],
+#password-modal[style*="display:flex"] {
+    opacity: 1;
+    visibility: visible;
+}
+
+#password-modal[style*="display: flex"] .modal,
+#password-modal[style*="display:flex"] .modal {
+    transform: translateY(0) scale(1);
+}

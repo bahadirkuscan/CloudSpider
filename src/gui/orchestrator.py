@@ -812,7 +812,7 @@ class Orchestrator:
             logger.error(f"Action execution failed: {e}")
             return {"success": False, "error": str(e)}
 
-    # ── Graph Snapshots (AES-encrypted) ─────────────────────────────────
+    # ── Graph Snapshots (server-key encrypted, user-owned) ──────────────
 
     @staticmethod
     def _derive_key(password: str, salt: bytes) -> bytes:
@@ -820,9 +820,23 @@ class Orchestrator:
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=480_000)
         return base64.urlsafe_b64encode(kdf.derive(password.encode()))
 
-    def save_graph(self, name: str, password: str,
+    @staticmethod
+    def _get_server_key() -> bytes:
+        """Return a deterministic Fernet key derived from the Flask secret for server-managed encryption."""
+        secret = os.environ.get("FLASK_SECRET_KEY", "cloudspider-default-key")
+        salt = b"cloudspider-snapshot-salt"
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100_000)
+        return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
+
+    def save_graph(self, name: str, created_by: str,
                    client_state: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Export current Neo4j graph + full session state to an encrypted snapshot."""
+        """Export current Neo4j graph + full session state to an encrypted snapshot.
+
+        Uses a server-managed encryption key (no user password needed).
+        Metadata is stored in SQLite via db.py.
+        """
+        from src.gui import db as userdb
+
         self._ensure_builder()
         graph = self.get_graph_data()
 
@@ -842,61 +856,64 @@ class Orchestrator:
             "filter_initialized": cs.get("filterInitialized", False),
             "node_positions": cs.get("nodePositions", {}),
             "credentials": {
-                name: {
+                cname: {
                     "access_key_id": c["access_key_id"],
                     "secret_access_key": c["secret_access_key"],
                     "session_token": c["session_token"],
                     "region": c["region"],
                     "identity": c.get("identity"),
-                } for name, c in self._credentials.items()
+                } for cname, c in self._credentials.items()
             },
             "active_profile": self._active_profile,
         }
 
-        # Metadata header (unencrypted, for listing)
-        metadata = {
-            "name": name,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "profile": self._active_profile,
-            "node_count": len(graph["nodes"]),
-            "link_count": len(graph["links"]),
-        }
-
-        # Encrypt payload
-        salt = os.urandom(16)
-        key = self._derive_key(password, salt)
+        # Encrypt payload with server-managed key
+        key = self._get_server_key()
         fernet = Fernet(key)
         encrypted = fernet.encrypt(json.dumps(payload).encode())
 
+        # Generate unique filename
+        timestamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        filename = f"{created_by}_{safe_name}_{timestamp}.json"
+
         envelope = {
-            "metadata": metadata,
-            "salt": base64.b64encode(salt).decode(),
             "encrypted": encrypted.decode(),
         }
 
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+        filepath = os.path.join(self.snapshot_dir, filename)
         with open(filepath, "w") as f:
             json.dump(envelope, f)
-        logger.info(f"Encrypted snapshot saved: {filepath}")
+
+        # Store metadata in SQLite
+        userdb.create_snapshot_meta(
+            name=name,
+            filename=filename,
+            created_by=created_by,
+            node_count=len(graph["nodes"]),
+            link_count=len(graph["links"]),
+            profile=self._active_profile or "",
+        )
+
+        logger.info(f"Snapshot saved: {filepath} (by {created_by})")
         return {"name": name, "nodes": len(graph["nodes"]), "links": len(graph["links"])}
 
-    def load_graph(self, name: str, password: str, mode: str = "build") -> Dict[str, Any]:
-        """Load an encrypted snapshot, restore graph into Neo4j and return full state."""
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+    def load_graph_from_file(self, filename: str, mode: str = "build") -> Dict[str, Any]:
+        """Load an encrypted snapshot by filename, restore graph into Neo4j and return full state."""
+        filepath = os.path.join(self.snapshot_dir, filename)
         if not os.path.exists(filepath):
-            raise FileNotFoundError(f"Snapshot '{name}' not found.")
+            raise FileNotFoundError(f"Snapshot file '{filename}' not found.")
 
         with open(filepath, "r") as f:
             envelope = json.load(f)
 
-        # Decrypt
-        salt = base64.b64decode(envelope["salt"])
-        key = self._derive_key(password, salt)
+        # Decrypt with server-managed key
+        key = self._get_server_key()
         fernet = Fernet(key)
         try:
             decrypted = fernet.decrypt(envelope["encrypted"].encode())
         except InvalidToken:
-            raise ValueError("Incorrect password.")
+            raise ValueError("Failed to decrypt snapshot — server key mismatch.")
 
         data = json.loads(decrypted)
 
@@ -926,7 +943,7 @@ class Orchestrator:
         if data.get("active_profile") and data["active_profile"] in self._credentials:
             self._active_profile = data["active_profile"]
 
-        logger.info(f"Encrypted snapshot '{name}' loaded ({mode} mode).")
+        logger.info(f"Snapshot '{filename}' loaded ({mode} mode).")
 
         # Return full state for frontend restoration
         return {
@@ -946,33 +963,11 @@ class Orchestrator:
             },
         }
 
-    def list_snapshots(self) -> List[Dict[str, Any]]:
-        """List all saved graph snapshots (reads only unencrypted metadata)."""
-        snapshots = []
-        for filename in os.listdir(self.snapshot_dir):
-            if filename.endswith(".json"):
-                filepath = os.path.join(self.snapshot_dir, filename)
-                try:
-                    with open(filepath, "r") as f:
-                        data = json.load(f)
-                    meta = data.get("metadata", {})
-                    snapshots.append({
-                        "name": meta.get("name", filename.replace(".json", "")),
-                        "timestamp": meta.get("timestamp", ""),
-                        "profile": meta.get("profile", ""),
-                        "nodes": meta.get("node_count", 0),
-                        "links": meta.get("link_count", 0),
-                    })
-                except Exception:
-                    snapshots.append({"name": filename.replace(".json", ""), "error": "corrupt"})
-        # Sort snapshots by timestamp descending (most recent first)
-        snapshots.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        return snapshots
-
-    def delete_snapshot(self, name: str):
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+    def delete_snapshot_file(self, filename: str):
+        """Delete a snapshot file from disk by filename."""
+        filepath = os.path.join(self.snapshot_dir, filename)
         if os.path.exists(filepath):
             os.remove(filepath)
-            logger.info(f"Snapshot '{name}' deleted.")
+            logger.info(f"Snapshot file '{filename}' deleted.")
         else:
-            raise FileNotFoundError(f"Snapshot '{name}' not found.")
+            logger.warning(f"Snapshot file '{filename}' not found on disk.")

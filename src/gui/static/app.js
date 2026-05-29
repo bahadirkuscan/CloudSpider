@@ -8,6 +8,9 @@ let currentMode = "build";
 let currentModal = null;
 let logCount = 0;
 
+// Auth state
+let currentUser = null; // { username, role }
+
 // Tracks which nodes are compromised (ARN set)
 let compromisedNodes = new Set();
 // Tracks edge action status: key = "source|target|type", value = "taken"|"possible"|"blocked"
@@ -49,11 +52,13 @@ let initialCompromisedArn = null;
 
 // ── Init ─────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
+    const authed = await checkAuth();
+    if (!authed) return; // redirected to login
+    applyRoleRestrictions();
     initGraph();
     initSocketIO();
     refreshCredentials();
     refreshSnapshots();
-    // Restore session state and graph on page refresh
     await restoreSessionState();
     await loadGraphData();
 });
@@ -1172,20 +1177,24 @@ async function executeAction() {
 // ── Snapshots ────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 
+let currentSnapshotTab = "own";
+
+function switchSnapshotTab(tab) {
+    currentSnapshotTab = tab;
+    document.querySelectorAll(".snapshot-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+    document.getElementById("snapshot-list-own").style.display = tab === "own" ? "" : "none";
+    document.getElementById("snapshot-list-public").style.display = tab === "public" ? "" : "none";
+}
+
 async function saveSnapshot() {
     const name = document.getElementById("snap-name").value.trim();
     if (!name) return showToast("Enter a snapshot name.", "error");
-    const password = prompt("Enter a password to encrypt this snapshot:");
-    if (!password) return showToast("Password is required to save a snapshot.", "error");
     setLoading("btn-save-snap", true);
     try {
         const nodePositions = {};
         if (graphData && graphData.nodes) {
             graphData.nodes.forEach(n => {
-                nodePositions[n.id] = { 
-                    x: n.x, y: n.y, 
-                    fx: n.fx, fy: n.fy 
-                };
+                nodePositions[n.id] = { x: n.x, y: n.y, fx: n.fx, fy: n.fy };
             });
         }
         const clientState = {
@@ -1201,7 +1210,7 @@ async function saveSnapshot() {
             filterInitialized,
             showActiveEdgesOnly
         };
-        const res = await api("/api/snapshots/save", "POST", { name, password, state: clientState });
+        const res = await api("/api/snapshots/save", "POST", { name, state: clientState });
         showToast(`Snapshot "${name}" saved (${res.nodes} nodes, ${res.links} links).`, "success");
         document.getElementById("snap-name").value = "";
         refreshSnapshots();
@@ -1211,48 +1220,78 @@ async function saveSnapshot() {
 
 async function refreshSnapshots() {
     try {
-        const snaps = await api("/api/snapshots");
-        const list = document.getElementById("snapshot-list");
-        list.innerHTML = "";
-        if (!snaps.length) { list.innerHTML = '<p class="text-muted" style="font-size:12px">No snapshots saved yet.</p>'; return; }
-        snaps.forEach(s => {
-            let formattedTime = "";
-            if (s.timestamp) {
-                const d = new Date(s.timestamp);
-                if (!isNaN(d.getTime())) {
-                    const dd = String(d.getDate()).padStart(2, '0');
-                    const mm = String(d.getMonth() + 1).padStart(2, '0');
-                    const yyyy = d.getFullYear();
-                    const hh = String(d.getHours()).padStart(2, '0');
-                    const min = String(d.getMinutes()).padStart(2, '0');
-                    formattedTime = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-                } else {
-                    formattedTime = s.timestamp;
-                }
-            }
-            
-            const div = document.createElement("div");
-            div.className = "snapshot-item";
-            div.innerHTML = `
-                <div class="snapshot-info">
-                    <div class="snapshot-name">${s.name}</div>
-                    <div class="snapshot-meta">${s.nodes || 0} nodes · ${s.links || 0} edges · ${formattedTime}</div>
-                </div>
-                <div class="cred-item-actions">
-                    <button class="btn btn-sm btn-ghost" onclick="loadSnapshot('${s.name}')">Load</button>
-                    <button class="btn btn-sm btn-ghost" onclick="deleteSnapshot('${s.name}')" style="color:var(--accent-red)">✕</button>
-                </div>`;
-            list.appendChild(div);
-        });
+        const data = await api("/api/snapshots");
+        renderSnapshotList("snapshot-list-own", data.own, true);
+        renderSnapshotList("snapshot-list-public", data.public, false);
     } catch (e) { /* silent */ }
 }
 
-async function loadSnapshot(name) {
-    const password = prompt(`Enter the password for snapshot "${name}":`);
-    if (!password) return showToast("Password is required to load a snapshot.", "error");
+function renderSnapshotList(containerId, snaps, isOwn) {
+    const list = document.getElementById(containerId);
+    list.innerHTML = "";
+    if (!snaps || !snaps.length) {
+        list.innerHTML = '<p class="text-muted" style="font-size:12px">No snapshots.</p>';
+        return;
+    }
+    snaps.forEach(s => {
+        let formattedTime = "";
+        if (s.created_at) {
+            const d = new Date(s.created_at);
+            if (!isNaN(d.getTime())) {
+                const dd = String(d.getDate()).padStart(2, '0');
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const yyyy = d.getFullYear();
+                const hh = String(d.getHours()).padStart(2, '0');
+                const min = String(d.getMinutes()).padStart(2, '0');
+                formattedTime = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+            } else {
+                formattedTime = s.created_at;
+            }
+        }
+
+        const div = document.createElement("div");
+        div.className = "snapshot-item";
+
+        let visibilityToggle = "";
+        if (isOwn) {
+            const isPublic = s.visibility === "public";
+            visibilityToggle = `<button class="btn btn-sm btn-ghost snapshot-visibility-toggle" 
+                onclick="toggleSnapshotVisibility('${s.name}', '${isPublic ? 'private' : 'public'}')" 
+                title="${isPublic ? 'Make Private' : 'Make Public'}">
+                ${isPublic ? '🔓' : '🔒'}
+            </button>`;
+        }
+
+        let deleteBtn = "";
+        if (isOwn || (currentUser && currentUser.role === "admin")) {
+            deleteBtn = `<button class="btn btn-sm btn-ghost" onclick="deleteSnapshot('${s.name}')" style="color:var(--accent-red)">✕</button>`;
+        }
+
+        div.innerHTML = `
+            <div class="snapshot-info">
+                <div class="snapshot-name">${s.name}</div>
+                <div class="snapshot-meta">${s.node_count || 0} nodes · ${s.link_count || 0} edges · ${formattedTime}</div>
+                <div class="snapshot-created-by">Created By: ${s.created_by || 'unknown'}</div>
+            </div>
+            <div class="cred-item-actions">
+                ${visibilityToggle}
+                <button class="btn btn-sm btn-ghost" onclick="loadSnapshot('${s.name}', ${!isOwn})">Load</button>
+                ${deleteBtn}
+            </div>`;
+        list.appendChild(div);
+    });
+}
+
+async function loadSnapshot(name, needsPassword) {
+    let password = null;
+    if (needsPassword) {
+        password = await showPasswordModal("Load Public Snapshot", `Enter the password for snapshot "${name}":`);
+        if (!password) return showToast("Password is required to load another user's snapshot.", "error");
+    }
     try {
-        const res = await api("/api/snapshots/load", "POST", { name, password, mode: currentMode });
-        // Restore frontend state from snapshot
+        const body = { name, mode: currentMode };
+        if (password) body.password = password;
+        const res = await api("/api/snapshots/load", "POST", body);
         if (res.state) {
             compromisedNodes = new Set(res.state.compromisedNodes || []);
             edgeStatus = res.state.edgeStatus || {};
@@ -1273,11 +1312,26 @@ async function loadSnapshot(name) {
 }
 
 async function deleteSnapshot(name) {
-    const password = prompt(`Enter the password for snapshot "${name}" to delete it:`);
-    if (!password) return showToast("Password is required to delete a snapshot.", "error");
+    if (!confirm(`Delete snapshot "${name}"?`)) return;
     try {
-        await api(`/api/snapshots/${name}`, "DELETE", { password });
+        await api(`/api/snapshots/${name}`, "DELETE");
         showToast(`Snapshot "${name}" deleted.`, "info");
+        refreshSnapshots();
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function toggleSnapshotVisibility(name, newVisibility) {
+    let password = null;
+    if (newVisibility === "public") {
+        password = await showPasswordModal("Make Snapshot Public", 
+            "Set a password that other users will need to load this snapshot:");
+        if (!password) return showToast("Password is required to make a snapshot public.", "error");
+    }
+    try {
+        const body = { visibility: newVisibility };
+        if (password) body.password = password;
+        await api(`/api/snapshots/${name}/visibility`, "POST", body);
+        showToast(`Snapshot "${name}" is now ${newVisibility}.`, "success");
         refreshSnapshots();
     } catch (e) { showToast(e.message, "error"); }
 }
@@ -1640,4 +1694,167 @@ function toggleActiveEdgesFilter() {
     showActiveEdgesOnly = cb.checked;
     renderGraph();
     persistSessionState();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Auth & Session ───────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+async function checkAuth() {
+    try {
+        const res = await api("/api/auth/me");
+        currentUser = { username: res.username, role: res.role };
+        updateUserBadge();
+        return true;
+    } catch (e) {
+        window.location.href = "/login";
+        return false;
+    }
+}
+
+function updateUserBadge() {
+    document.getElementById("user-badge-name").textContent = currentUser.username;
+    const roleTag = document.getElementById("user-badge-role");
+    roleTag.textContent = currentUser.role;
+    roleTag.className = `user-role-tag role-${currentUser.role}`;
+    document.getElementById("btn-admin-panel").style.display = currentUser.role === "admin" ? "" : "none";
+}
+
+function applyRoleRestrictions() {
+    if (currentUser.role === "readonly") {
+        // Disable write controls
+        const writeElements = [
+            "section-credentials", "section-pipeline",
+            "btn-save-snap", "snap-save-group"
+        ];
+        writeElements.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add("readonly-disabled");
+        });
+        // Disable action execution and false-positive buttons in modal
+        const execBtn = document.getElementById("btn-execute-action");
+        if (execBtn) execBtn.classList.add("readonly-disabled");
+        const fpBtn = document.getElementById("btn-false-positive");
+        if (fpBtn) fpBtn.classList.add("readonly-disabled");
+    }
+}
+
+async function logout() {
+    try { await api("/api/auth/logout", "POST"); } catch (_) {}
+    window.location.href = "/login";
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Password Modal ───────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+let _passwordModalResolve = null;
+
+function showPasswordModal(title, message) {
+    return new Promise((resolve) => {
+        _passwordModalResolve = resolve;
+        document.getElementById("password-modal-title").textContent = title;
+        document.getElementById("password-modal-message").textContent = message;
+        document.getElementById("password-modal-input").value = "";
+        document.getElementById("password-modal").style.display = "flex";
+        setTimeout(() => document.getElementById("password-modal-input").focus(), 100);
+    });
+}
+
+function submitPasswordModal() {
+    const pw = document.getElementById("password-modal-input").value;
+    document.getElementById("password-modal").style.display = "none";
+    if (_passwordModalResolve) _passwordModalResolve(pw || null);
+    _passwordModalResolve = null;
+}
+
+function cancelPasswordModal() {
+    document.getElementById("password-modal").style.display = "none";
+    if (_passwordModalResolve) _passwordModalResolve(null);
+    _passwordModalResolve = null;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Admin Panel ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+function openAdminPanel() {
+    document.getElementById("admin-modal").style.display = "flex";
+    refreshAdminUsers();
+}
+
+function closeAdminPanel() {
+    document.getElementById("admin-modal").style.display = "none";
+}
+
+async function refreshAdminUsers() {
+    try {
+        const users = await api("/api/admin/users");
+        const list = document.getElementById("admin-user-list");
+        list.innerHTML = "";
+        users.forEach(u => {
+            const div = document.createElement("div");
+            div.className = "admin-user-item";
+            const isAdmin = u.role === "admin";
+            div.innerHTML = `
+                <div class="admin-user-info">
+                    <span class="admin-user-name">${u.username}</span>
+                    <span class="user-role-tag role-${u.role}">${u.role}</span>
+                    <span class="text-muted" style="font-size:11px">Created by ${u.created_by || 'system'}</span>
+                </div>
+                <div class="admin-user-actions">
+                    ${isAdmin ? '' : `
+                        <select class="form-input role-select" onchange="changeUserRole('${u.username}', this.value)">
+                            <option value="full" ${u.role === 'full' ? 'selected' : ''}>Full</option>
+                            <option value="readonly" ${u.role === 'readonly' ? 'selected' : ''}>Read Only</option>
+                        </select>
+                        <button class="btn btn-sm btn-ghost" onclick="deleteUser('${u.username}')" style="color:var(--accent-red)" title="Delete user">✕</button>
+                    `}
+                </div>`;
+            list.appendChild(div);
+        });
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function createUser() {
+    const username = document.getElementById("admin-new-username").value.trim();
+    const password = document.getElementById("admin-new-user-pw").value;
+    const role = document.getElementById("admin-new-user-role").value;
+    if (!username || !password) return showToast("Username and password are required.", "error");
+    try {
+        await api("/api/admin/users", "POST", { username, password, role });
+        showToast(`User "${username}" created.`, "success");
+        document.getElementById("admin-new-username").value = "";
+        document.getElementById("admin-new-user-pw").value = "";
+        refreshAdminUsers();
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function deleteUser(username) {
+    if (!confirm(`Delete user "${username}"? Their snapshots will also be deleted.`)) return;
+    try {
+        await api(`/api/admin/users/${username}`, "DELETE");
+        showToast(`User "${username}" deleted.`, "info");
+        refreshAdminUsers();
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function changeUserRole(username, newRole) {
+    try {
+        await api(`/api/admin/users/${username}/role`, "PUT", { role: newRole });
+        showToast(`Role for "${username}" changed to ${newRole}.`, "success");
+        refreshAdminUsers();
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function changeAdminPassword() {
+    const current = document.getElementById("admin-current-pw").value;
+    const newPw = document.getElementById("admin-new-pw").value;
+    if (!current || !newPw) return showToast("Both current and new password are required.", "error");
+    try {
+        await api("/api/admin/password", "PUT", { current_password: current, new_password: newPw });
+        showToast("Admin password updated.", "success");
+        document.getElementById("admin-current-pw").value = "";
+        document.getElementById("admin-new-pw").value = "";
+    } catch (e) { showToast(e.message, "error"); }
 }

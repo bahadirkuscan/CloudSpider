@@ -5,6 +5,8 @@ moto>=5.0.0
 neo4j==5.16.0
 flask==3.0.0
 flask-socketio==5.3.6
+flask-login>=0.6.3
 gevent==24.2.1
 gevent-websocket==0.10.1
 cryptography>=42.0.0
+bcrypt>=4.1.0

@@ -7,8 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
-# Create snapshots directory for graph persistence
-RUN mkdir -p /app/snapshots
+# Create directories for graph persistence and SQLite database
+RUN mkdir -p /app/snapshots /app/data
 
 EXPOSE 5000
 
