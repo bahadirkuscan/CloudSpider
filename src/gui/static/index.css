@@ -631,6 +631,7 @@ select.form-input {
 
 .path-action-bar {
     display: flex;
+    flex-direction: column;
     gap: 6px;
     padding-top: 8px;
     border-top: 1px solid var(--glass-border);
@@ -749,6 +750,7 @@ select.form-input {
     stroke-width: 5 !important;
     stroke-opacity: 1 !important;
     stroke-dasharray: none !important;
+    marker-end: url(#arrow-highlighted) !important;
     filter: drop-shadow(0 0 8px var(--accent-cyan)) drop-shadow(0 0 16px var(--accent-cyan));
     animation: edge-glow 1.2s ease-in-out infinite alternate;
 }

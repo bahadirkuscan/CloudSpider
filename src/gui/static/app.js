@@ -333,6 +333,11 @@ function initGraph() {
         .attr("viewBox", "0 -5 10 10").attr("refX", 22).attr("refY", 0)
         .attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto")
         .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#484f58");
+    // Highlighted marker (cyan, for pathfinder highlighting)
+    defs.append("marker").attr("id", "arrow-highlighted")
+        .attr("viewBox", "0 -5 10 10").attr("refX", 22).attr("refY", 0)
+        .attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto")
+        .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#56d4dd");
 
     const g = svg.append("g").attr("id", "graph-root");
     gLinks = g.append("g").attr("class", "links");
