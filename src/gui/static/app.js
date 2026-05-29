@@ -295,6 +295,7 @@ async function runBuild() {
     try {
         const res = await api("/api/pipeline/build", "POST", { mode: currentMode });
         setPipelineStage("graph_built", `Graph: ${res.nodes} nodes, ${res.edges} edges.`);
+        filterInitialized = false; // reset so auto-filter can apply on fresh build
         await loadGraphData();
     } catch (e) { setPipelineStage("error", e.message); }
     setLoading("btn-build", false);
@@ -306,6 +307,7 @@ async function runAll() {
     try {
         const res = await api("/api/pipeline/run-all", "POST", { mode: currentMode });
         setPipelineStage("graph_built", `Pipeline complete. ${res.build.nodes} nodes, ${res.build.edges} edges.`);
+        filterInitialized = false; // reset so auto-filter can apply on fresh build
         await loadGraphData();
     } catch (e) { setPipelineStage("error", e.message); }
     setLoading("btn-run-all", false);
@@ -1377,11 +1379,89 @@ function populateFilterCheckboxes() {
     const edgeTypes = new Set();
     graphData.links.forEach(l => edgeTypes.add(l.type));
 
-    // Initialize visibility sets on first load (all visible)
+    // Maximum edges to display on initial load before auto-filtering kicks in
+    const MAX_INITIAL_EDGES = 100;
+
+    // Initialize visibility sets on first load (all visible, or auto-filtered)
     if (!filterInitialized) {
-        visibleNodeIds = new Set(graphData.nodes.map(n => n.id));
         visibleEdgeTypes = new Set(edgeTypes);
         filterInitialized = true;
+
+        // Check if the total edge count exceeds the cap
+        if (graphData.links.length > MAX_INITIAL_EDGES && initialCompromisedArn) {
+            // Build adjacency lists for BFS
+            const adjNodes = {};  // nodeId -> Set of neighbor nodeIds
+            const allNodeIds = new Set(graphData.nodes.map(n => n.id));
+            allNodeIds.forEach(id => adjNodes[id] = new Set());
+            graphData.links.forEach(l => {
+                const sId = typeof l.source === "object" ? l.source.id : l.source;
+                const tId = typeof l.target === "object" ? l.target.id : l.target;
+                adjNodes[sId]?.add(tId);
+                adjNodes[tId]?.add(sId);
+            });
+
+            // Helper: count edges between a given set of node IDs
+            function countEdgesBetween(nodeSet) {
+                let count = 0;
+                graphData.links.forEach(l => {
+                    const sId = typeof l.source === "object" ? l.source.id : l.source;
+                    const tId = typeof l.target === "object" ? l.target.id : l.target;
+                    if (nodeSet.has(sId) && nodeSet.has(tId)) count++;
+                });
+                return count;
+            }
+
+            // BFS layer-by-layer from the compromised node
+            const included = new Set();
+            included.add(initialCompromisedArn);
+            let frontier = [initialCompromisedArn];
+
+            while (frontier.length > 0) {
+                // Collect next layer: all unvisited neighbors of the current frontier
+                const nextLayer = new Set();
+                frontier.forEach(nodeId => {
+                    (adjNodes[nodeId] || []).forEach(neighbor => {
+                        if (!included.has(neighbor)) nextLayer.add(neighbor);
+                    });
+                });
+
+                if (nextLayer.size === 0) break;
+
+                // Check if adding the entire layer stays under the cap
+                const candidate = new Set([...included, ...nextLayer]);
+                const edgeCount = countEdgesBetween(candidate);
+
+                if (edgeCount <= MAX_INITIAL_EDGES) {
+                    // Safe to add the whole layer
+                    nextLayer.forEach(id => included.add(id));
+                    frontier = [...nextLayer];
+                } else {
+                    // Adding the full layer exceeds the cap — add nodes one by one
+                    for (const nodeId of nextLayer) {
+                        included.add(nodeId);
+                        if (countEdgesBetween(included) > MAX_INITIAL_EDGES) {
+                            included.delete(nodeId); // undo — this one pushes us over
+                            break;
+                        }
+                    }
+                    break; // stop BFS after partial layer
+                }
+            }
+
+            visibleNodeIds = included;
+            const totalNodes = graphData.nodes.length;
+            const shownNodes = included.size;
+            const hiddenNodes = totalNodes - shownNodes;
+            showToast(
+                `Auto-filter applied: showing ${shownNodes} of ${totalNodes} nodes (${hiddenNodes} hidden). ` +
+                `Graph has ${graphData.links.length} edges — capped to ~${MAX_INITIAL_EDGES}. ` +
+                `Use Filters to show more.`,
+                "info"
+            );
+        } else {
+            // Under the cap or no compromised node — show everything
+            visibleNodeIds = new Set(graphData.nodes.map(n => n.id));
+        }
     } else {
         // Add any NEW nodes/types that appeared (preserves unchecked state of known nodes)
         graphData.nodes.forEach(n => {
