@@ -32,7 +32,7 @@ A collection of intentionally vulnerable AWS IAM environments for testing and va
 | # | Name | Scale | Vulnerability | CloudSpider Detection |
 |---|------|-------|---------------|----------------------|
 | 07 | [NotAction Deny Inversion](hard/lab07_notaction_inversion/) | Large (12 users, 6 roles, 4 groups, 3 Lambdas, 2 S3) | `NotAction` Allow inadvertently grants IAM actions | ✅ `NotAction`/`NotResource` eval |
-| 08 | [Deep Transitive Chain](hard/lab08_deep_transitive/) | Large (15 users, 10 roles, 5 groups, 3 EC2s, 2 Lambdas, 2 S3, 1 RDS) | 5+ hop buried chain through noise | ✅ Transitive Cypher pathfinding |
+| 08 | [Deep Transitive Chain](hard/lab08_deep_transitive/) | Large (15 users, 10 roles, 5 groups, 3 EC2s, 2 Lambdas, 2 S3, 1 RDS) | 5+ hop buried chain through noise | ✅ Transitive BFS pathfinding |
 | 09 | [Condition & Boundary Evasion](hard/lab09_condition_boundary/) | Large (10 users, 8 roles, 3 groups, 2 EC2, 1 Lambda, 2 S3) | Boundary bypass + region condition gap + trust policy flaw | ⚠️ Partial |
 
 ### Extras
@@ -41,7 +41,7 @@ Larger, more realistic scenarios with progressive tag-scoped discovery — each 
 | # | Name | Scale | Vulnerability |
 |---|------|-------|---------------|
 | 10 | [Self-Service Policy Tampering](extras/lab10_cicd_supply_chain/) | Medium (29 users, 14 roles, 6 groups) | `iam:PutGroupPolicy` on own team group → group-inherited `sts:AssumeRole` → `iam:AttachRolePolicy` with `AdministratorAccess` → `sts:AssumeRole` to final role |
-| 11 | [Enterprise Realistic](extras/lab11_enterprise_realistic/) | Large (103 users, 27 roles, 15 groups) | 6-hop chain: `iam:CreateAccessKey` on machine user → `iam:CreatePolicyVersion --set-as-default` → `sts:AssumeRole` via backdoored policy → `iam:UpdateAssumeRolePolicy` on break-glass role → `sts:AssumeRole` to admin |
+| 11 | [Enterprise Realistic](extras/lab11_enterprise_realistic/) | Large (103 users, 27 roles, 15 groups) | 5-hop chain: `iam:CreateAccessKey` on machine user → `iam:CreatePolicyVersion --set-as-default` → `sts:AssumeRole` via backdoored policy → `iam:UpdateAssumeRolePolicy` on break-glass role → `sts:AssumeRole` to admin |
 
 ## Usage
 
@@ -74,4 +74,3 @@ terraform destroy
 1. **Realistic naming**: All resources use plausible enterprise naming conventions to simulate real environments.
 2. **Variable scale**: Small labs isolate a single vulnerability; large labs bury vulnerabilities in operational noise.
 3. **Progressive difficulty**: Easy labs have obvious policy misconfigurations; Hard labs require understanding of AWS evaluation logic edge cases.
-4. **Beyond CloudSpider**: Some labs include vulnerabilities that CloudSpider may not currently detect, serving as roadmap targets for future detection capabilities.
