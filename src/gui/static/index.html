@@ -19,6 +19,12 @@
                 <span>CloudSpider</span>
             </div>
             <div class="header-right">
+                <div id="user-badge" class="user-badge">
+                    <span id="user-badge-role" class="user-role-tag"></span>
+                    <span id="user-badge-name"></span>
+                    <button class="btn btn-ghost btn-sm" id="btn-admin-panel" onclick="openAdminPanel()" style="display:none" title="Admin Panel">⚙️</button>
+                    <button class="btn btn-ghost btn-sm" onclick="logout()" title="Logout">🚪</button>
+                </div>
                 <div id="pipeline-stage" class="pipeline-indicator" data-stage="idle">Idle</div>
                 <!-- Filter Toggle -->
                 <div class="filter-wrapper">
@@ -175,7 +181,7 @@
                 </div>
                 <div class="sidebar-section-body">
                     <div class="section-content">
-                        <div class="form-group">
+                        <div class="form-group" id="snap-save-group">
                             <label for="snap-name">Snapshot Name</label>
                             <input type="text" id="snap-name" class="form-input" placeholder="e.g. baseline-scan">
                         </div>
@@ -183,7 +189,12 @@
                             <span class="spinner"></span>
                             💾 Save Current Graph
                         </button>
-                        <div id="snapshot-list" class="mt-12"></div>
+                        <div class="snapshot-tabs">
+                            <button class="snapshot-tab active" data-tab="own" onclick="switchSnapshotTab('own')">My Snapshots</button>
+                            <button class="snapshot-tab" data-tab="public" onclick="switchSnapshotTab('public')">Public</button>
+                        </div>
+                        <div id="snapshot-list-own" class="snapshot-tab-content active"></div>
+                        <div id="snapshot-list-public" class="snapshot-tab-content" style="display:none"></div>
                     </div>
                 </div>
             </div>
@@ -304,6 +315,61 @@
                     <span class="spinner"></span>
                     Execute Action
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Admin Panel Modal ──────────────────────────────────────── -->
+    <div id="admin-modal" class="modal-overlay" onclick="if(event.target===this)closeAdminPanel()" style="display:none">
+        <div class="modal admin-modal">
+            <div class="modal-title">
+                <span>⚙️</span>
+                <span>Admin Panel</span>
+                <button class="btn btn-ghost btn-sm" onclick="closeAdminPanel()" style="margin-left:auto">✕</button>
+            </div>
+            <div class="modal-body admin-body">
+                <div class="admin-section">
+                    <h3>Change Admin Password</h3>
+                    <div class="admin-password-form">
+                        <input type="password" id="admin-current-pw" class="form-input" placeholder="Current password">
+                        <input type="password" id="admin-new-pw" class="form-input" placeholder="New password">
+                        <button class="btn btn-primary btn-sm" onclick="changeAdminPassword()">Update Password</button>
+                    </div>
+                </div>
+                <div class="admin-section">
+                    <h3>Create User</h3>
+                    <div class="admin-create-user-form">
+                        <input type="text" id="admin-new-username" class="form-input" placeholder="Username">
+                        <input type="password" id="admin-new-user-pw" class="form-input" placeholder="Password">
+                        <select id="admin-new-user-role" class="form-input">
+                            <option value="full">Full Access</option>
+                            <option value="readonly">Read Only</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" onclick="createUser()">Create User</button>
+                    </div>
+                </div>
+                <div class="admin-section">
+                    <h3>Users</h3>
+                    <div id="admin-user-list" class="admin-user-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Password Prompt Modal ──────────────────────────────────── -->
+    <div id="password-modal" class="modal-overlay" onclick="if(event.target===this)cancelPasswordModal()" style="display:none">
+        <div class="modal password-modal">
+            <div class="modal-title">
+                <span>🔐</span>
+                <span id="password-modal-title">Enter Password</span>
+            </div>
+            <div class="modal-body">
+                <p id="password-modal-message" class="text-muted" style="margin-bottom:12px"></p>
+                <input type="password" id="password-modal-input" class="form-input" placeholder="Password" onkeydown="if(event.key==='Enter')submitPasswordModal()">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitPasswordModal()">Confirm</button>
             </div>
         </div>
     </div>

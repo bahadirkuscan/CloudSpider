@@ -15,7 +15,7 @@ services:
     build: .
     container_name: cloudspider-app
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -24,6 +24,8 @@ services:
       PYTHONUNBUFFERED: "1"
     volumes:
       - graph-snapshots:/app/snapshots
+      - app-data:/app/data
 
 volumes:
   graph-snapshots:
+  app-data:

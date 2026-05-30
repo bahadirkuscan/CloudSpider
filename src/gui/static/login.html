@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="CloudSpider — Sign in to access AWS privilege escalation discovery and graph exploration.">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="theme-color" content="#0d1117">
+    <title>CloudSpider — Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/login.css">
+</head>
+
+<body>
+    <!-- Animated network background -->
+    <canvas id="network-bg"></canvas>
+
+    <!-- Login container -->
+    <div class="login-wrapper">
+        <div class="login-card">
+            <!-- Logo -->
+            <div class="login-logo">
+                <span class="login-logo-icon">🕷️</span>
+                <span class="login-logo-text">CloudSpider</span>
+            </div>
+            <p class="login-subtitle">Sign in to continue</p>
+
+            <!-- Login Form -->
+            <form id="login-form" autocomplete="on" onsubmit="return handleLogin(event)">
+                <div class="login-field">
+                    <label for="login-username">Username</label>
+                    <div class="input-wrapper">
+                        <span class="input-icon">👤</span>
+                        <input type="text" id="login-username" name="username" autocomplete="username"
+                            placeholder="Enter your username" required autofocus>
+                    </div>
+                </div>
+
+                <div class="login-field">
+                    <label for="login-password">Password</label>
+                    <div class="input-wrapper">
+                        <span class="input-icon">🔒</span>
+                        <input type="password" id="login-password" name="password" autocomplete="current-password"
+                            placeholder="Enter your password" required>
+                    </div>
+                </div>
+
+                <!-- Error message -->
+                <div id="login-error" class="login-error" style="display:none">
+                    <span class="error-icon">⚠️</span>
+                    <span id="login-error-text">Invalid credentials</span>
+                </div>
+
+                <button type="submit" id="login-btn" class="login-btn">
+                    <span class="login-btn-text">Sign In</span>
+                    <span class="login-spinner"></span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Network background animation
+        (function () {
+            const canvas = document.getElementById('network-bg');
+            const ctx = canvas.getContext('2d');
+            let width, height, nodes = [], animId;
+
+            function resize() {
+                width = canvas.width = window.innerWidth;
+                height = canvas.height = window.innerHeight;
+            }
+
+            function createNodes() {
+                nodes = [];
+                const count = Math.floor((width * height) / 18000);
+                for (let i = 0; i < count; i++) {
+                    nodes.push({
+                        x: Math.random() * width,
+                        y: Math.random() * height,
+                        vx: (Math.random() - 0.5) * 0.4,
+                        vy: (Math.random() - 0.5) * 0.4,
+                        r: Math.random() * 2 + 1,
+                        opacity: Math.random() * 0.5 + 0.1
+                    });
+                }
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, width, height);
+
+                // Draw connections
+                const maxDist = 160;
+                for (let i = 0; i < nodes.length; i++) {
+                    for (let j = i + 1; j < nodes.length; j++) {
+                        const dx = nodes[i].x - nodes[j].x;
+                        const dy = nodes[i].y - nodes[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < maxDist) {
+                            const alpha = (1 - dist / maxDist) * 0.12;
+                            ctx.strokeStyle = `rgba(88, 166, 255, ${alpha})`;
+                            ctx.lineWidth = 0.6;
+                            ctx.beginPath();
+                            ctx.moveTo(nodes[i].x, nodes[i].y);
+                            ctx.lineTo(nodes[j].x, nodes[j].y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                // Draw nodes
+                for (const node of nodes) {
+                    ctx.fillStyle = `rgba(88, 166, 255, ${node.opacity})`;
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Move
+                    node.x += node.vx;
+                    node.y += node.vy;
+
+                    // Bounce
+                    if (node.x < 0 || node.x > width) node.vx *= -1;
+                    if (node.y < 0 || node.y > height) node.vy *= -1;
+                }
+
+                animId = requestAnimationFrame(draw);
+            }
+
+            window.addEventListener('resize', () => {
+                resize();
+                createNodes();
+            });
+
+            resize();
+            createNodes();
+            draw();
+        })();
+
+        // Login handler
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            const errorEl = document.getElementById('login-error');
+            const errorText = document.getElementById('login-error-text');
+            const btn = document.getElementById('login-btn');
+            const card = document.querySelector('.login-card');
+
+            if (!username || !password) {
+                errorText.textContent = 'Please enter both username and password.';
+                errorEl.style.display = 'flex';
+                card.classList.add('shake');
+                setTimeout(() => card.classList.remove('shake'), 500);
+                return false;
+            }
+
+            // Loading state
+            btn.classList.add('loading');
+            btn.disabled = true;
+            errorEl.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.status === 'ok') {
+                    // Success — redirect
+                    card.classList.add('success');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 400);
+                } else {
+                    throw new Error(data.error || 'Invalid username or password.');
+                }
+            } catch (err) {
+                errorText.textContent = err.message || 'Authentication failed.';
+                errorEl.style.display = 'flex';
+                card.classList.add('shake');
+                setTimeout(() => card.classList.remove('shake'), 500);
+            }
+
+            btn.classList.remove('loading');
+            btn.disabled = false;
+            return false;
+        }
+
+        // Check if already authed
+        (async () => {
+            try {
+                const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+                if (res.ok) window.location.href = '/';
+            } catch (_) { }
+        })();
+    </script>
+</body>
+
+</html>

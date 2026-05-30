@@ -12,10 +12,11 @@ from src.evaluator.engine import PolicyEvaluator
 logger = logging.getLogger(__name__)
 
 class GraphBuilder:
-    def __init__(self, uri="bolt://localhost:7687"):
+    def __init__(self, uri="bolt://localhost:7687", owner: str = "_default"):
         self.uri = uri
         self.driver = None
         self._container_name = "cloudspider-neo4j"
+        self._owner = owner
 
     def connect(self):
         """Connect to an already-running Neo4j instance (e.g. managed by Docker Compose)."""
@@ -35,10 +36,10 @@ class GraphBuilder:
                 time.sleep(3)
 
     def clear_graph(self):
-        """Remove all nodes and relationships from the database."""
+        """Remove all nodes and relationships owned by the current user."""
         with self.driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
-        logger.info("Graph cleared.")
+            session.run("MATCH (n {_owner: $owner}) DETACH DELETE n", owner=self._owner)
+        logger.info(f"Graph cleared for owner '{self._owner}'.")
         
     def start_local_db(self):
         """Orchestrate local Neo4j Docker container start"""
@@ -97,18 +98,18 @@ class GraphBuilder:
             name = item.name
             arn = item.id
             query = f"""
-            MERGE (n:{label} {{arn: $arn}})
+            MERGE (n:{label} {{arn: $arn, _owner: $owner}})
             SET n.name = $name
             """
-            session.run(query, arn=arn, name=name)
+            session.run(query, arn=arn, name=name, owner=self._owner)
 
     def _create_edge(self, source_arn: str, target_arn: str, relationship: str):
         with self.driver.session() as session:
             query = f"""
-            MATCH (a {{arn: $source_arn}}), (b {{arn: $target_arn}})
+            MATCH (a {{arn: $source_arn, _owner: $owner}}), (b {{arn: $target_arn, _owner: $owner}})
             MERGE (a)-[r:{relationship}]->(b)
             """
-            session.run(query, source_arn=source_arn, target_arn=target_arn)
+            session.run(query, source_arn=source_arn, target_arn=target_arn, owner=self._owner)
 
     def _check_trust_policy_allows(self, identity: Identity, role: Identity) -> bool:
         """

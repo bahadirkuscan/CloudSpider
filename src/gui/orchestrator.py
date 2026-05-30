@@ -32,10 +32,13 @@ class Orchestrator:
     pipeline, and provides graph data for the frontend.
     """
 
-    def __init__(self, neo4j_uri: str = None):
+    def __init__(self, neo4j_uri: str = None, owner: str = "_default"):
         self.neo4j_uri = neo4j_uri or os.environ.get("NEO4J_URI", "bolt://localhost:7687")
         self.snapshot_dir = os.environ.get("SNAPSHOT_DIR", "/app/snapshots")
         os.makedirs(self.snapshot_dir, exist_ok=True)
+
+        # Owner for Neo4j graph isolation
+        self._owner = owner
 
         # Credential store: {profile_name: {access_key_id, secret_access_key, session_token, region}}
         self._credentials: Dict[str, Dict[str, str]] = {}
@@ -133,7 +136,7 @@ class Orchestrator:
     def _ensure_builder(self):
         """Ensure the GraphBuilder is connected to Neo4j."""
         if not self._builder or not self._builder.driver:
-            self._builder = GraphBuilder(uri=self.neo4j_uri)
+            self._builder = GraphBuilder(uri=self.neo4j_uri, owner=self._owner)
             self._builder.connect()
 
     def run_discovery(self) -> Dict[str, Any]:
@@ -209,20 +212,27 @@ class Orchestrator:
     def _get_graph_stats(self) -> Dict[str, int]:
         self._ensure_builder()
         with self._builder.driver.session() as session:
-            node_count = session.run("MATCH (n) RETURN count(n) as c").single()["c"]
-            edge_count = session.run("MATCH ()-[r]->() RETURN count(r) as c").single()["c"]
+            node_count = session.run(
+                "MATCH (n {_owner: $owner}) RETURN count(n) as c", owner=self._owner
+            ).single()["c"]
+            edge_count = session.run(
+                "MATCH (a {_owner: $owner})-[r]->(b {_owner: $owner}) RETURN count(r) as c", owner=self._owner
+            ).single()["c"]
         return {"nodes": node_count, "edges": edge_count}
 
     def get_graph_data(self) -> Dict[str, Any]:
-        """Fetch all nodes and edges from Neo4j formatted for D3.js."""
+        """Fetch all nodes and edges from Neo4j formatted for D3.js (scoped to current owner)."""
         self._ensure_builder()
         nodes = []
         links = []
         node_ids = set()
 
         with self._builder.driver.session() as session:
-            # Fetch all nodes
-            result = session.run("MATCH (n) RETURN n, labels(n) as labels")
+            # Fetch all nodes belonging to this owner
+            result = session.run(
+                "MATCH (n {_owner: $owner}) RETURN n, labels(n) as labels",
+                owner=self._owner,
+            )
             for record in result:
                 node = record["n"]
                 labels = record["labels"]
@@ -234,8 +244,11 @@ class Orchestrator:
                     "type": labels[0] if labels else "UNKNOWN",
                 })
 
-            # Fetch all relationships
-            result = session.run("MATCH (a)-[r]->(b) RETURN a.arn as source, b.arn as target, type(r) as rel_type")
+            # Fetch all relationships between this owner's nodes
+            result = session.run(
+                "MATCH (a {_owner: $owner})-[r]->(b {_owner: $owner}) RETURN a.arn as source, b.arn as target, type(r) as rel_type",
+                owner=self._owner,
+            )
             for record in result:
                 links.append({
                     "source": record["source"],
@@ -812,7 +825,7 @@ class Orchestrator:
             logger.error(f"Action execution failed: {e}")
             return {"success": False, "error": str(e)}
 
-    # ── Graph Snapshots (AES-encrypted) ─────────────────────────────────
+    # ── Graph Snapshots (server-key encrypted, user-owned) ──────────────
 
     @staticmethod
     def _derive_key(password: str, salt: bytes) -> bytes:
@@ -820,9 +833,23 @@ class Orchestrator:
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=480_000)
         return base64.urlsafe_b64encode(kdf.derive(password.encode()))
 
-    def save_graph(self, name: str, password: str,
+    @staticmethod
+    def _get_server_key() -> bytes:
+        """Return a deterministic Fernet key derived from the Flask secret for server-managed encryption."""
+        secret = os.environ.get("FLASK_SECRET_KEY", "cloudspider-default-key")
+        salt = b"cloudspider-snapshot-salt"
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100_000)
+        return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
+
+    def save_graph(self, name: str, created_by: str,
                    client_state: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Export current Neo4j graph + full session state to an encrypted snapshot."""
+        """Export current Neo4j graph + full session state to an encrypted snapshot.
+
+        Uses a server-managed encryption key (no user password needed).
+        Metadata is stored in SQLite via db.py.
+        """
+        from src.gui import db as userdb
+
         self._ensure_builder()
         graph = self.get_graph_data()
 
@@ -840,63 +867,67 @@ class Orchestrator:
             "known_node_ids": cs.get("knownNodeIds", []),
             "known_edge_types": cs.get("knownEdgeTypes", []),
             "filter_initialized": cs.get("filterInitialized", False),
+            "show_active_edges_only": cs.get("showActiveEdgesOnly", False),
             "node_positions": cs.get("nodePositions", {}),
             "credentials": {
-                name: {
+                cname: {
                     "access_key_id": c["access_key_id"],
                     "secret_access_key": c["secret_access_key"],
                     "session_token": c["session_token"],
                     "region": c["region"],
                     "identity": c.get("identity"),
-                } for name, c in self._credentials.items()
+                } for cname, c in self._credentials.items()
             },
             "active_profile": self._active_profile,
         }
 
-        # Metadata header (unencrypted, for listing)
-        metadata = {
-            "name": name,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "profile": self._active_profile,
-            "node_count": len(graph["nodes"]),
-            "link_count": len(graph["links"]),
-        }
-
-        # Encrypt payload
-        salt = os.urandom(16)
-        key = self._derive_key(password, salt)
+        # Encrypt payload with server-managed key
+        key = self._get_server_key()
         fernet = Fernet(key)
         encrypted = fernet.encrypt(json.dumps(payload).encode())
 
+        # Generate unique filename
+        timestamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        filename = f"{created_by}_{safe_name}_{timestamp}.json"
+
         envelope = {
-            "metadata": metadata,
-            "salt": base64.b64encode(salt).decode(),
             "encrypted": encrypted.decode(),
         }
 
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+        filepath = os.path.join(self.snapshot_dir, filename)
         with open(filepath, "w") as f:
             json.dump(envelope, f)
-        logger.info(f"Encrypted snapshot saved: {filepath}")
+
+        # Store metadata in SQLite
+        userdb.create_snapshot_meta(
+            name=name,
+            filename=filename,
+            created_by=created_by,
+            node_count=len(graph["nodes"]),
+            link_count=len(graph["links"]),
+            profile=self._active_profile or "",
+        )
+
+        logger.info(f"Snapshot saved: {filepath} (by {created_by})")
         return {"name": name, "nodes": len(graph["nodes"]), "links": len(graph["links"])}
 
-    def load_graph(self, name: str, password: str, mode: str = "build") -> Dict[str, Any]:
-        """Load an encrypted snapshot, restore graph into Neo4j and return full state."""
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+    def load_graph_from_file(self, filename: str, mode: str = "build") -> Dict[str, Any]:
+        """Load an encrypted snapshot by filename, restore graph into Neo4j and return full state."""
+        filepath = os.path.join(self.snapshot_dir, filename)
         if not os.path.exists(filepath):
-            raise FileNotFoundError(f"Snapshot '{name}' not found.")
+            raise FileNotFoundError(f"Snapshot file '{filename}' not found.")
 
         with open(filepath, "r") as f:
             envelope = json.load(f)
 
-        # Decrypt
-        salt = base64.b64decode(envelope["salt"])
-        key = self._derive_key(password, salt)
+        # Decrypt with server-managed key
+        key = self._get_server_key()
         fernet = Fernet(key)
         try:
             decrypted = fernet.decrypt(envelope["encrypted"].encode())
         except InvalidToken:
-            raise ValueError("Incorrect password.")
+            raise ValueError("Failed to decrypt snapshot — server key mismatch.")
 
         data = json.loads(decrypted)
 
@@ -909,14 +940,14 @@ class Orchestrator:
             for node in data.get("nodes", []):
                 label = node.get("type", "UNKNOWN")
                 session.run(
-                    f"MERGE (n:{label} {{arn: $arn}}) SET n.name = $name",
-                    arn=node["id"], name=node["name"],
+                    f"MERGE (n:{label} {{arn: $arn, _owner: $owner}}) SET n.name = $name",
+                    arn=node["id"], name=node["name"], owner=self._owner,
                 )
             for link in data.get("links", []):
                 rel_type = link.get("type", "CONNECTED")
                 session.run(
-                    f"MATCH (a {{arn: $src}}), (b {{arn: $tgt}}) MERGE (a)-[:{rel_type}]->(b)",
-                    src=link["source"], tgt=link["target"],
+                    f"MATCH (a {{arn: $src, _owner: $owner}}), (b {{arn: $tgt, _owner: $owner}}) MERGE (a)-[:{rel_type}]->(b)",
+                    src=link["source"], tgt=link["target"], owner=self._owner,
                 )
 
         # Restore credentials into this session's orchestrator
@@ -926,7 +957,7 @@ class Orchestrator:
         if data.get("active_profile") and data["active_profile"] in self._credentials:
             self._active_profile = data["active_profile"]
 
-        logger.info(f"Encrypted snapshot '{name}' loaded ({mode} mode).")
+        logger.info(f"Snapshot '{filename}' loaded ({mode} mode).")
 
         # Return full state for frontend restoration
         return {
@@ -941,38 +972,17 @@ class Orchestrator:
                 "knownNodeIds": data.get("known_node_ids", []),
                 "knownEdgeTypes": data.get("known_edge_types", []),
                 "filterInitialized": data.get("filter_initialized", False),
+                "showActiveEdgesOnly": data.get("show_active_edges_only", False),
                 "nodePositions": data.get("node_positions", {}),
                 "activeProfile": data.get("active_profile"),
             },
         }
 
-    def list_snapshots(self) -> List[Dict[str, Any]]:
-        """List all saved graph snapshots (reads only unencrypted metadata)."""
-        snapshots = []
-        for filename in os.listdir(self.snapshot_dir):
-            if filename.endswith(".json"):
-                filepath = os.path.join(self.snapshot_dir, filename)
-                try:
-                    with open(filepath, "r") as f:
-                        data = json.load(f)
-                    meta = data.get("metadata", {})
-                    snapshots.append({
-                        "name": meta.get("name", filename.replace(".json", "")),
-                        "timestamp": meta.get("timestamp", ""),
-                        "profile": meta.get("profile", ""),
-                        "nodes": meta.get("node_count", 0),
-                        "links": meta.get("link_count", 0),
-                    })
-                except Exception:
-                    snapshots.append({"name": filename.replace(".json", ""), "error": "corrupt"})
-        # Sort snapshots by timestamp descending (most recent first)
-        snapshots.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        return snapshots
-
-    def delete_snapshot(self, name: str):
-        filepath = os.path.join(self.snapshot_dir, f"{name}.json")
+    def delete_snapshot_file(self, filename: str):
+        """Delete a snapshot file from disk by filename."""
+        filepath = os.path.join(self.snapshot_dir, filename)
         if os.path.exists(filepath):
             os.remove(filepath)
-            logger.info(f"Snapshot '{name}' deleted.")
+            logger.info(f"Snapshot file '{filename}' deleted.")
         else:
-            raise FileNotFoundError(f"Snapshot '{name}' not found.")
+            logger.warning(f"Snapshot file '{filename}' not found on disk.")
