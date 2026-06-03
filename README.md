@@ -125,7 +125,8 @@ A web-based single-page application served by Flask that provides a graphical in
 A multi-user authentication system built on Flask-Login, SQLite, and bcrypt.
 - **Three Roles**: `admin` (full access + user management), `full` (all pipeline operations), `readonly` (view-only access).
 - **First-Run Setup**: On first launch, the application auto-generates a random admin password and prints it to stdout. This password is shown only once.
-- **Admin Panel**: Create and delete user accounts, change user roles, change the admin password.
+- **Admin Panel**: Create and delete user accounts, change user roles, change the admin password, reset user passwords.
+- **Self-Service Password Change**: All authenticated users can change their own password via the ⚙️ button in the header.
 - **Session Isolation**: Each authenticated user gets their own Orchestrator instance with isolated credentials, pipeline state, and Neo4j graph data.
 - **Snapshot Sharing**: Snapshots are private by default. Owners can make them public with a password; other users must enter the password to load a public snapshot.
 
@@ -186,7 +187,9 @@ All API endpoints require authentication unless noted. Write operations require 
 | | `POST` | `/api/admin/users` | Admin | Create a new user account |
 | | `DELETE` | `/api/admin/users/<username>` | Admin | Delete user and their data |
 | | `PUT` | `/api/admin/users/<username>/role` | Admin | Change a user's role |
+| | `PUT` | `/api/admin/users/<username>/password` | Admin | Reset a user's password |
 | | `PUT` | `/api/admin/password` | Admin | Change admin password |
+| | `PUT` | `/api/auth/password` | Required | Change own password |
 | **Credentials** | `GET` | `/api/credentials` | Required | List credential profiles |
 | | `POST` | `/api/credentials` | Write | Add a new credential profile |
 | | `DELETE` | `/api/credentials/<name>` | Write | Remove a credential profile |

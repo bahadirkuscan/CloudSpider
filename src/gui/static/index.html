@@ -29,6 +29,8 @@
                     <span id="user-badge-name"></span>
                     <button class="btn btn-ghost btn-sm" id="btn-admin-panel" onclick="openAdminPanel()"
                         style="display:none" title="Admin Panel">Admin Panel</button>
+                    <button class="btn btn-ghost btn-sm" id="btn-change-password" onclick="openChangePasswordModal()"
+                        title="Change Password">⚙️</button>
                     <button class="btn btn-ghost btn-sm" onclick="logout()" title="Logout">Logout</button>
                 </div>
                 <div id="pipeline-stage" class="pipeline-indicator" data-stage="idle">Idle</div>
@@ -388,6 +390,26 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="submitPasswordModal()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Change Password Modal ───────────────────────────────────── -->
+    <div id="change-pw-modal" class="modal-overlay" onclick="if(event.target===this)closeChangePasswordModal()"
+        style="display:none">
+        <div class="modal change-pw-modal">
+            <div class="modal-title">
+                <span>⚙️</span>
+                <span>Change Password</span>
+                <button class="btn btn-ghost btn-sm" onclick="closeChangePasswordModal()" style="margin-left:auto">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="admin-password-form">
+                    <input type="password" id="change-pw-current" class="form-input" placeholder="Current password">
+                    <input type="password" id="change-pw-new" class="form-input" placeholder="New password">
+                    <input type="password" id="change-pw-confirm" class="form-input" placeholder="Confirm new password">
+                    <button class="btn btn-primary btn-sm" onclick="changeOwnPassword()">Update Password</button>
+                </div>
             </div>
         </div>
     </div>

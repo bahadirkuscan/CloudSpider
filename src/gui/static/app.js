@@ -1812,6 +1812,7 @@ async function refreshAdminUsers() {
                             <option value="full" ${u.role === 'full' ? 'selected' : ''}>Full</option>
                             <option value="readonly" ${u.role === 'readonly' ? 'selected' : ''}>Read Only</option>
                         </select>
+                        <button class="btn btn-sm btn-ghost" onclick="resetUserPassword('${u.username}')" title="Reset password">🔑</button>
                         <button class="btn btn-sm btn-ghost" onclick="deleteUser('${u.username}')" style="color:var(--accent-red)" title="Delete user">✕</button>
                     `}
                 </div>`;
@@ -1860,5 +1861,44 @@ async function changeAdminPassword() {
         showToast("Admin password updated.", "success");
         document.getElementById("admin-current-pw").value = "";
         document.getElementById("admin-new-pw").value = "";
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+async function resetUserPassword(username) {
+    const newPw = prompt(`Enter a new password for "${username}":`);
+    if (!newPw) return;
+    if (newPw.length < 4) return showToast("Password must be at least 4 characters.", "error");
+    try {
+        await api(`/api/admin/users/${username}/password`, "PUT", { new_password: newPw });
+        showToast(`Password for "${username}" has been reset.`, "success");
+    } catch (e) { showToast(e.message, "error"); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── Change My Password ──────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+function openChangePasswordModal() {
+    document.getElementById("change-pw-current").value = "";
+    document.getElementById("change-pw-new").value = "";
+    document.getElementById("change-pw-confirm").value = "";
+    document.getElementById("change-pw-modal").style.display = "flex";
+    setTimeout(() => document.getElementById("change-pw-current").focus(), 100);
+}
+
+function closeChangePasswordModal() {
+    document.getElementById("change-pw-modal").style.display = "none";
+}
+
+async function changeOwnPassword() {
+    const current = document.getElementById("change-pw-current").value;
+    const newPw = document.getElementById("change-pw-new").value;
+    const confirm = document.getElementById("change-pw-confirm").value;
+    if (!current || !newPw) return showToast("Both current and new password are required.", "error");
+    if (newPw !== confirm) return showToast("New passwords do not match.", "error");
+    try {
+        await api("/api/auth/password", "PUT", { current_password: current, new_password: newPw });
+        showToast("Password updated successfully.", "success");
+        closeChangePasswordModal();
     } catch (e) { showToast(e.message, "error"); }
 }

@@ -261,6 +261,42 @@ def admin_change_password():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
+@app.route("/api/admin/users/<username>/password", methods=["PUT"])
+@role_required("admin")
+def admin_reset_user_password(username):
+    data = request.json or {}
+    new_pw = data.get("new_password", "")
+    if not new_pw:
+        return jsonify({"error": "New password is required."}), 400
+    user = userdb.get_user(username)
+    if not user:
+        return jsonify({"error": f"User '{username}' not found."}), 404
+    if user["role"] == "admin":
+        return jsonify({"error": "Use the admin password change form to change your own password."}), 400
+    try:
+        userdb.update_password(username, new_pw)
+        logger.info(f"Admin '{current_user.username}' reset password for user '{username}'.")
+        return jsonify({"status": "ok"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/auth/password", methods=["PUT"])
+@login_required
+def change_own_password():
+    data = request.json or {}
+    current_pw = data.get("current_password", "")
+    new_pw = data.get("new_password", "")
+    if not current_pw or not new_pw:
+        return jsonify({"error": "Both current and new password are required."}), 400
+    if not userdb.authenticate_user(current_user.username, current_pw):
+        return jsonify({"error": "Current password is incorrect."}), 403
+    try:
+        userdb.update_password(current_user.username, new_pw)
+        logger.info(f"User '{current_user.username}' changed their own password.")
+        return jsonify({"status": "ok"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
 # ── Credential API ────────────────────────────────────────────────────
 
 @app.route("/api/credentials", methods=["GET"])

@@ -1631,3 +1631,24 @@ option.compromised-option {
 #password-modal[style*="display:flex"] .modal {
     transform: translateY(0) scale(1);
 }
+
+/* ── Change Password Modal ────────────────────────────────────────── */
+.change-pw-modal {
+    width: 420px;
+    max-width: 90vw;
+}
+
+.change-pw-modal .admin-password-form .btn {
+    margin-top: 4px;
+}
+
+#change-pw-modal[style*="display: flex"],
+#change-pw-modal[style*="display:flex"] {
+    opacity: 1;
+    visibility: visible;
+}
+
+#change-pw-modal[style*="display: flex"] .modal,
+#change-pw-modal[style*="display:flex"] .modal {
+    transform: translateY(0) scale(1);
+}
