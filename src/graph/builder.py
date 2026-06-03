@@ -237,7 +237,7 @@ class GraphBuilder:
                     group_arn = group_arn_map.get(gname)
                     if group_arn:
                         self._create_edge(identity.id, group_arn, "MEMBER_OF")
-                        logger.info(f"Edge: {identity.name} --[MEMBER_OF]--> {gname}")
+                        logger.debug(f"Edge: {identity.name} --[MEMBER_OF]--> {gname}")
 
         # ── USES_ROLE edges: Lambda → Execution Role ──
         for resource in resources:
@@ -245,7 +245,7 @@ class GraphBuilder:
                 exec_role_arn = resource.metadata.get("Role", "")
                 if exec_role_arn and exec_role_arn in identity_map:
                     self._create_edge(resource.id, exec_role_arn, "USES_ROLE")
-                    logger.info(f"Edge: {resource.name} --[USES_ROLE]--> {identity_map[exec_role_arn].name}")
+                    logger.debug(f"Edge: {resource.name} --[USES_ROLE]--> {identity_map[exec_role_arn].name}")
 
         # ── Permission-based edges ──
         for identity in identities:
@@ -269,23 +269,23 @@ class GraphBuilder:
                     # PutUserPolicy — inject arbitrary inline policy
                     if evaluator.is_allowed("iam:PutUserPolicy", target):
                         self._create_edge(identity.id, target.id, "PutUserPolicy")
-                        logger.info(f"Edge: {identity.name} --[PutUserPolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[PutUserPolicy]--> {target.name}")
 
                     # AttachUserPolicy — attach managed policy (e.g. AdministratorAccess)
                     if evaluator.is_allowed("iam:AttachUserPolicy", target):
                         self._create_edge(identity.id, target.id, "AttachUserPolicy")
-                        logger.info(f"Edge: {identity.name} --[AttachUserPolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[AttachUserPolicy]--> {target.name}")
 
                     # CreateAccessKey — forge fresh long-term credentials
                     if evaluator.is_allowed("iam:CreateAccessKey", target):
                         self._create_edge(identity.id, target.id, "CreateAccessKey")
-                        logger.info(f"Edge: {identity.name} --[CreateAccessKey]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[CreateAccessKey]--> {target.name}")
 
                     # CreateLoginProfile / UpdateLoginProfile — set console password
                     if evaluator.is_allowed("iam:CreateLoginProfile", target) or \
                        evaluator.is_allowed("iam:UpdateLoginProfile", target):
                         self._create_edge(identity.id, target.id, "CreateLoginProfile")
-                        logger.info(f"Edge: {identity.name} --[CreateLoginProfile]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[CreateLoginProfile]--> {target.name}")
 
                 # ══════════════════════════════════════════════════════
                 # IAM Escalation edges: Identity → Role
@@ -295,7 +295,7 @@ class GraphBuilder:
                     if evaluator.is_allowed("sts:AssumeRole", target):
                         if self._check_trust_policy_allows(identity, target):
                             self._create_edge(identity.id, target.id, "ASSUME_ROLE")
-                            logger.info(f"Edge: {identity.name} --[ASSUME_ROLE]--> {target.name}")
+                            logger.debug(f"Edge: {identity.name} --[ASSUME_ROLE]--> {target.name}")
 
                     # PassRole — authorization check for service-based execution
                     passrole_ctx = {}
@@ -304,22 +304,22 @@ class GraphBuilder:
                         passrole_ctx["iam:PassedToService"] = trust_services if len(trust_services) > 1 else trust_services[0]
                     if evaluator.is_allowed("iam:PassRole", target, context=passrole_ctx):
                         self._create_edge(identity.id, target.id, "PASS_ROLE")
-                        logger.info(f"Edge: {identity.name} --[PASS_ROLE]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[PASS_ROLE]--> {target.name}")
 
                     # PutRolePolicy — inject arbitrary inline policy into role
                     if evaluator.is_allowed("iam:PutRolePolicy", target):
                         self._create_edge(identity.id, target.id, "PutRolePolicy")
-                        logger.info(f"Edge: {identity.name} --[PutRolePolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[PutRolePolicy]--> {target.name}")
 
                     # AttachRolePolicy — attach managed policy to role
                     if evaluator.is_allowed("iam:AttachRolePolicy", target):
                         self._create_edge(identity.id, target.id, "AttachRolePolicy")
-                        logger.info(f"Edge: {identity.name} --[AttachRolePolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[AttachRolePolicy]--> {target.name}")
 
                     # UpdateAssumeRolePolicy — rewrite trust policy
                     if evaluator.is_allowed("iam:UpdateAssumeRolePolicy", target):
                         self._create_edge(identity.id, target.id, "UpdateAssumeRolePolicy")
-                        logger.info(f"Edge: {identity.name} --[UpdateAssumeRolePolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[UpdateAssumeRolePolicy]--> {target.name}")
 
                 # ══════════════════════════════════════════════════════
                 # IAM Escalation edges: Identity → Group
@@ -328,17 +328,17 @@ class GraphBuilder:
                     # PutGroupPolicy — inject arbitrary inline policy into group
                     if evaluator.is_allowed("iam:PutGroupPolicy", target):
                         self._create_edge(identity.id, target.id, "PutGroupPolicy")
-                        logger.info(f"Edge: {identity.name} --[PutGroupPolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[PutGroupPolicy]--> {target.name}")
 
                     # AttachGroupPolicy — attach managed policy to group
                     if evaluator.is_allowed("iam:AttachGroupPolicy", target):
                         self._create_edge(identity.id, target.id, "AttachGroupPolicy")
-                        logger.info(f"Edge: {identity.name} --[AttachGroupPolicy]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[AttachGroupPolicy]--> {target.name}")
 
                     # AddUserToGroup — add any user to the target group
                     if evaluator.is_allowed("iam:AddUserToGroup", target):
                         self._create_edge(identity.id, target.id, "AddUserToGroup")
-                        logger.info(f"Edge: {identity.name} --[AddUserToGroup]--> {target.name}")
+                        logger.debug(f"Edge: {identity.name} --[AddUserToGroup]--> {target.name}")
 
                 # ══════════════════════════════════════════════════════
                 # Compute Escalation edges: Identity → Lambda / EC2
@@ -350,18 +350,18 @@ class GraphBuilder:
                         if evaluator.is_allowed("lambda:UpdateFunctionCode", target) or \
                            evaluator.is_allowed("lambda:CreateFunction", target):
                             self._create_edge(identity.id, target.id, "CanUpdateFunction")
-                            logger.info(f"Edge: {identity.name} --[CanUpdateFunction]--> {target.name}")
+                            logger.debug(f"Edge: {identity.name} --[CanUpdateFunction]--> {target.name}")
 
                         # CanInvokeFunction — execute existing code
                         if evaluator.is_allowed("lambda:InvokeFunction", target):
                             self._create_edge(identity.id, target.id, "CanInvokeFunction")
-                            logger.info(f"Edge: {identity.name} --[CanInvokeFunction]--> {target.name}")
+                            logger.debug(f"Edge: {identity.name} --[CanInvokeFunction]--> {target.name}")
 
                     is_ec2 = "ec2" in target.id.lower() or "instance" in target.id.lower()
                     if is_ec2:
                         if evaluator.is_allowed("ec2:RunInstances", target):
                             self._create_edge(identity.id, target.id, "CanRunInstance")
-                            logger.info(f"Edge: {identity.name} --[CanRunInstance]--> {target.name}")
+                            logger.debug(f"Edge: {identity.name} --[CanRunInstance]--> {target.name}")
 
                 # ══════════════════════════════════════════════════════
                 # Storage Access edges: Identity → S3 / RDS
@@ -385,10 +385,10 @@ class GraphBuilder:
 
                         if can_full or can_write:
                             self._create_edge(identity.id, target.id, "HAS_ACCESS")
-                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 write/full)")
+                            logger.debug(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 write/full)")
                         elif can_read:
                             self._create_edge(identity.id, target.id, "HAS_ACCESS")
-                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 read)")
+                            logger.debug(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (S3 read)")
 
                     elif is_rds:
                         can_access = (
@@ -397,7 +397,7 @@ class GraphBuilder:
                         )
                         if can_access:
                             self._create_edge(identity.id, target.id, "HAS_ACCESS")
-                            logger.info(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (RDS)")
+                            logger.debug(f"Edge: {identity.name} --[HAS_ACCESS]--> {target.name} (RDS)")
 
         # ══════════════════════════════════════════════════════════════
         # Self-mutation edges: CreatePolicyVersion
@@ -413,5 +413,5 @@ class GraphBuilder:
                 if policy_arn and policy.get("PolicyType") == "Managed":
                     if evaluator.is_allowed("iam:CreatePolicyVersion", policy_arn):
                         self._create_edge(identity.id, identity.id, "CreatePolicyVersion")
-                        logger.info(f"Edge: {identity.name} --[CreatePolicyVersion]--> SELF (can rewrite {policy.get('PolicyName', policy_arn)})")
+                        logger.debug(f"Edge: {identity.name} --[CreatePolicyVersion]--> SELF (can rewrite {policy.get('PolicyName', policy_arn)})")
                         break  # One self-edge is sufficient

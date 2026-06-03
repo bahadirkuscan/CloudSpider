@@ -75,6 +75,10 @@ function initSocketIO() {
 }
 
 // ── Sidebar Toggle ───────────────────────────────────────────────────
+function toggleSidebar() {
+    document.getElementById("app-container").classList.toggle("sidebar-collapsed");
+}
+
 function toggleSection(id) {
     document.getElementById(id).classList.toggle("open");
 }
@@ -138,9 +142,9 @@ async function persistSessionState() {
         const nodePositions = {};
         if (graphData && graphData.nodes) {
             graphData.nodes.forEach(n => {
-                nodePositions[n.id] = { 
-                    x: n.x, y: n.y, 
-                    fx: n.fx, fy: n.fy 
+                nodePositions[n.id] = {
+                    x: n.x, y: n.y,
+                    fx: n.fx, fy: n.fy
                 };
             });
         }
@@ -236,17 +240,17 @@ async function refreshCredentials() {
         const active = creds.find(c => c.is_active);
         const badge = document.getElementById("profile-badge");
         const text = document.getElementById("profile-badge-text");
-        if (active) { 
-            badge.classList.add("active"); 
-            text.textContent = active.name; 
+        if (active) {
+            badge.classList.add("active");
+            text.textContent = active.name;
             if (active.identity && !initialCompromisedArn) {
                 initialCompromisedArn = active.identity.arn;
                 compromisedNodes.add(initialCompromisedArn);
             }
         }
-        else { 
-            badge.classList.remove("active"); 
-            text.textContent = "No Profile"; 
+        else {
+            badge.classList.remove("active");
+            text.textContent = "No Profile";
             initialCompromisedArn = null;
         }
     } catch (e) { /* silent */ }
@@ -360,7 +364,7 @@ function initGraph() {
 async function loadGraphData() {
     try {
         graphData = await api("/api/graph");
-        
+
         if (window._snapshotNodePositions) {
             graphData.nodes.forEach(n => {
                 const pos = window._snapshotNodePositions[n.id];
@@ -578,8 +582,8 @@ function renderGraph() {
                 linkHitbox.attr("d", buildPath);
                 updateLabelPositions();
             })
-            .on("end", function () { 
-                d3.select(this).style("cursor", "grab"); 
+            .on("end", function () {
+                d3.select(this).style("cursor", "grab");
                 persistSessionState();
             })
         );
@@ -703,9 +707,9 @@ function renderGraph() {
 // Drag handlers — nodes stay pinned where dragged for free positioning
 function dragStart(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
 function dragging(e, d) { d.fx = e.x; d.fy = e.y; }
-function dragEnd(e, d) { 
-    if (!e.active) simulation.alphaTarget(0); 
-    /* keep d.fx/d.fy so node stays pinned */ 
+function dragEnd(e, d) {
+    if (!e.active) simulation.alphaTarget(0);
+    /* keep d.fx/d.fy so node stays pinned */
     persistSessionState();
 }
 
@@ -1323,7 +1327,7 @@ async function deleteSnapshot(name) {
 async function toggleSnapshotVisibility(name, newVisibility) {
     let password = null;
     if (newVisibility === "public") {
-        password = await showPasswordModal("Make Snapshot Public", 
+        password = await showPasswordModal("Make Snapshot Public",
             "Set a password that other users will need to load this snapshot:");
         if (!password) return showToast("Password is required to make a snapshot public.", "error");
     }
@@ -1388,7 +1392,7 @@ async function clearGraph() {
     document.getElementById("filter-nodes-list").innerHTML = "";
     document.getElementById("filter-edges-list").innerHTML = "";
     clearPathfinder();
-    
+
     // Clear backend state and graph
     try {
         await api("/api/session/state", "DELETE");
@@ -1396,7 +1400,7 @@ async function clearGraph() {
     } catch (e) {
         console.error("Failed to clear backend state:", e);
     }
-    
+
     showToast("Graph cleared. Click 'Build Graph' to rebuild.", "info");
 }
 
@@ -1525,7 +1529,7 @@ function populateFilterCheckboxes() {
             if (!knownEdgeTypes.has(t)) visibleEdgeTypes.add(t);
         });
     }
-    
+
     // Update known sets
     graphData.nodes.forEach(n => knownNodeIds.add(n.id));
     edgeTypes.forEach(t => knownEdgeTypes.add(t));
@@ -1715,7 +1719,7 @@ async function checkAuth() {
 function updateUserBadge() {
     document.getElementById("user-badge-name").textContent = currentUser.username;
     const roleTag = document.getElementById("user-badge-role");
-    roleTag.textContent = currentUser.role;
+    roleTag.textContent = currentUser.role === "full" ? "FULL ACCESS" : currentUser.role;
     roleTag.className = `user-role-tag role-${currentUser.role}`;
     document.getElementById("btn-admin-panel").style.display = currentUser.role === "admin" ? "" : "none";
 }
@@ -1740,7 +1744,7 @@ function applyRoleRestrictions() {
 }
 
 async function logout() {
-    try { await api("/api/auth/logout", "POST"); } catch (_) {}
+    try { await api("/api/auth/logout", "POST"); } catch (_) { }
     window.location.href = "/login";
 }
 

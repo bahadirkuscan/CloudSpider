@@ -7,6 +7,7 @@
     <meta name="description"
         content="CloudSpider — Interactive AWS privilege escalation discovery and graph exploration tool.">
     <title>CloudSpider</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
     <link rel="stylesheet" href="/static/index.css">
 </head>
 
@@ -15,42 +16,55 @@
         <!-- ── Header ──────────────────────────────────────────── -->
         <header id="header">
             <div class="logo">
-                <span class="logo-icon">🕷️</span>
+                <button class="btn btn-ghost btn-sm" id="btn-sidebar-toggle" onclick="toggleSidebar()"
+                    title="Toggle Sidebar"
+                    style="margin-right: 8px; font-size: 16px; padding: 4px 8px; color: var(--text-secondary);">☰</button>
+                <img src="/static/logo.png" alt="CloudSpider Logo" class="logo-icon"
+                    style="height: 32px; width: 32px; object-fit: contain;">
                 <span>CloudSpider</span>
             </div>
             <div class="header-right">
                 <div id="user-badge" class="user-badge">
                     <span id="user-badge-role" class="user-role-tag"></span>
                     <span id="user-badge-name"></span>
-                    <button class="btn btn-ghost btn-sm" id="btn-admin-panel" onclick="openAdminPanel()" style="display:none" title="Admin Panel">⚙️</button>
-                    <button class="btn btn-ghost btn-sm" onclick="logout()" title="Logout">🚪</button>
+                    <button class="btn btn-ghost btn-sm" id="btn-admin-panel" onclick="openAdminPanel()"
+                        style="display:none" title="Admin Panel">Admin Panel</button>
+                    <button class="btn btn-ghost btn-sm" onclick="logout()" title="Logout">Logout</button>
                 </div>
                 <div id="pipeline-stage" class="pipeline-indicator" data-stage="idle">Idle</div>
                 <!-- Filter Toggle -->
                 <div class="filter-wrapper">
-                    <button id="btn-filter-toggle" class="btn btn-ghost btn-sm" onclick="toggleFilterPanel()" title="Filter nodes & edges">
+                    <button id="btn-filter-toggle" class="btn btn-ghost btn-sm" onclick="toggleFilterPanel()"
+                        title="Filter nodes & edges">
                         🔍 Filters
                     </button>
                     <div id="filter-panel" class="filter-panel hidden">
                         <div class="filter-section">
-                            <div class="filter-section-header" onclick="toggleFilterSection('filter-nodes-list')">Nodes <span class="chevron">▶</span></div>
+                            <div class="filter-section-header" onclick="toggleFilterSection('filter-nodes-list')">Nodes
+                                <span class="chevron">▶</span>
+                            </div>
                             <div id="filter-nodes-list" class="filter-checklist">
                                 <div class="filter-search-wrapper">
-                                    <input type="text" id="filter-nodes-search" class="filter-search-input" placeholder="Search nodes…" oninput="filterNodeCheckboxes()">
+                                    <input type="text" id="filter-nodes-search" class="filter-search-input"
+                                        placeholder="Search nodes…" oninput="filterNodeCheckboxes()">
                                 </div>
                             </div>
                         </div>
                         <div class="filter-section">
-                            <div class="filter-section-header" onclick="toggleFilterSection('filter-edges-list')">Edges <span class="chevron">▶</span></div>
+                            <div class="filter-section-header" onclick="toggleFilterSection('filter-edges-list')">Edges
+                                <span class="chevron">▶</span>
+                            </div>
                             <div id="filter-edges-list" class="filter-checklist">
                                 <div class="filter-search-wrapper">
-                                    <input type="text" id="filter-edges-search" class="filter-search-input" placeholder="Search edges…" oninput="filterEdgeCheckboxes()">
+                                    <input type="text" id="filter-edges-search" class="filter-search-input"
+                                        placeholder="Search edges…" oninput="filterEdgeCheckboxes()">
                                 </div>
                             </div>
                         </div>
                         <div class="filter-section filter-active-edges-section">
                             <label class="filter-active-edges-label">
-                                <input type="checkbox" id="filter-active-edges-only" onchange="toggleActiveEdgesFilter()">
+                                <input type="checkbox" id="filter-active-edges-only"
+                                    onchange="toggleActiveEdgesFilter()">
                                 <span>Show only taken/possible edges</span>
                             </label>
                         </div>
@@ -131,7 +145,8 @@
                                 <span class="spinner"></span>
                                 🚀 Run All
                             </button>
-                            <button id="btn-clear-graph" class="btn btn-ghost btn-block" onclick="clearGraph()" style="margin-top:4px;color:var(--accent-red)">
+                            <button id="btn-clear-graph" class="btn btn-ghost btn-block" onclick="clearGraph()"
+                                style="margin-top:4px;color:var(--accent-red)">
                                 🗑️ Clear Graph
                             </button>
                         </div>
@@ -190,8 +205,10 @@
                             💾 Save Current Graph
                         </button>
                         <div class="snapshot-tabs">
-                            <button class="snapshot-tab active" data-tab="own" onclick="switchSnapshotTab('own')">My Snapshots</button>
-                            <button class="snapshot-tab" data-tab="public" onclick="switchSnapshotTab('public')">Public</button>
+                            <button class="snapshot-tab active" data-tab="own" onclick="switchSnapshotTab('own')">My
+                                Snapshots</button>
+                            <button class="snapshot-tab" data-tab="public"
+                                onclick="switchSnapshotTab('public')">Public</button>
                         </div>
                         <div id="snapshot-list-own" class="snapshot-tab-content active"></div>
                         <div id="snapshot-list-public" class="snapshot-tab-content" style="display:none"></div>
@@ -323,7 +340,6 @@
     <div id="admin-modal" class="modal-overlay" onclick="if(event.target===this)closeAdminPanel()" style="display:none">
         <div class="modal admin-modal">
             <div class="modal-title">
-                <span>⚙️</span>
                 <span>Admin Panel</span>
                 <button class="btn btn-ghost btn-sm" onclick="closeAdminPanel()" style="margin-left:auto">✕</button>
             </div>
@@ -357,7 +373,8 @@
     </div>
 
     <!-- ── Password Prompt Modal ──────────────────────────────────── -->
-    <div id="password-modal" class="modal-overlay" onclick="if(event.target===this)cancelPasswordModal()" style="display:none">
+    <div id="password-modal" class="modal-overlay" onclick="if(event.target===this)cancelPasswordModal()"
+        style="display:none">
         <div class="modal password-modal">
             <div class="modal-title">
                 <span>🔐</span>
@@ -365,7 +382,8 @@
             </div>
             <div class="modal-body">
                 <p id="password-modal-message" class="text-muted" style="margin-bottom:12px"></p>
-                <input type="password" id="password-modal-input" class="form-input" placeholder="Password" onkeydown="if(event.key==='Enter')submitPasswordModal()">
+                <input type="password" id="password-modal-input" class="form-input" placeholder="Password"
+                    onkeydown="if(event.key==='Enter')submitPasswordModal()">
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
